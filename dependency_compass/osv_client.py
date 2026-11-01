@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import httpx
@@ -9,6 +11,9 @@ from dependency_compass.models import Ecosystem
 OSV_BASE_URL = "https://api.osv.dev"
 MAX_BATCH = 1000   # OSV per-request query limit
 MAX_PAGES = 20   # cap on pagination rounds per batch
+MAX_ATTEMPTS = 4   # total tries per request (1 + 3 retries)
+BACKOFF_BASE = 0.5   # seconds; doubles each retry
+RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 TIMEOUT = httpx.Timeout(10.0, connect=5.0)   # explicit: never wait forever
 
 
@@ -25,15 +30,33 @@ class PackageQuery:
 
 class OSVClient:
     def __init__(self, transport: httpx.BaseTransport | None = None,
-                 base_url: str = OSV_BASE_URL) -> None:
+                 base_url: str = OSV_BASE_URL,
+                 sleep: Callable[[float], None] = time.sleep) -> None:
+        self._sleep = sleep
         self._http = httpx.Client(base_url=base_url, timeout=TIMEOUT,
                                   transport=transport)
+
+    def _send(self, queries: list[dict]) -> httpx.Response:
+        """POST with retries on transient failures only."""
+        for attempt in range(MAX_ATTEMPTS):
+            try:
+                response = self._http.post("/v1/querybatch",
+                                           json={"queries": queries})
+            except httpx.TransportError as exc:
+                if attempt == MAX_ATTEMPTS - 1:
+                    raise OSVError("OSV unreachable after retries") from exc
+            else:
+                if response.status_code not in RETRY_STATUSES:
+                    return response
+                if attempt == MAX_ATTEMPTS - 1:
+                    raise OSVError("OSV unavailable after retries")
+            self._sleep(BACKOFF_BASE * 2 ** attempt)
+        raise OSVError("OSV request failed")
 
     def _post(self, queries: list[dict]) -> list[tuple[list[str], object]]:
         """One request. Returns (vuln ids, next_page_token) per query."""
         try:
-            response = self._http.post("/v1/querybatch",
-                                       json={"queries": queries})
+            response = self._send(queries)
             response.raise_for_status()
             results = response.json()["results"]
             parsed = [([v["id"] for v in r.get("vulns", [])],

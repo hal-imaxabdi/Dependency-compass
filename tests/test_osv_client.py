@@ -8,7 +8,8 @@ from dependency_compass.osv_client import OSVClient, OSVError, PackageQuery
 
 
 def make_client(handler):
-    return OSVClient(transport=httpx.MockTransport(handler))
+    return OSVClient(transport=httpx.MockTransport(handler),
+                     sleep=lambda s: None)
 
 
 def test_results_map_back_in_input_order():
@@ -97,7 +98,7 @@ def test_failure_in_later_batch_raises_not_partial():
 
     def handler(request):
         calls.append(1)
-        if len(calls) == 2:
+        if len(calls) >= 2:
             return httpx.Response(500)
         qs = json.loads(request.content)["queries"]
         return httpx.Response(200, json={"results": [{} for _ in qs]})
@@ -147,3 +148,74 @@ def test_non_string_page_token_raises():
 
     with pytest.raises(OSVError):
         make_client(handler).query_batch(QUERIES)
+
+
+def retry_client(handler, delays):
+    return OSVClient(transport=httpx.MockTransport(handler),
+                     sleep=delays.append)
+
+
+def test_retries_503_then_succeeds_with_exponential_delays():
+    delays, calls = [], []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) < 3:
+            return httpx.Response(503)
+        return httpx.Response(200, json={"results": [{}]})
+
+    assert retry_client(handler, delays).query_batch(QUERIES[:1]) == [[]]
+    assert len(calls) == 3
+    assert delays == [0.5, 1.0]
+
+
+def test_retries_timeout_then_succeeds():
+    delays, calls = [], []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.ReadTimeout("slow", request=request)
+        return httpx.Response(200, json={"results": [{}]})
+
+    assert retry_client(handler, delays).query_batch(QUERIES[:1]) == [[]]
+    assert len(calls) == 2
+
+
+def test_gives_up_after_max_attempts_with_osv_error():
+    delays, calls = [], []
+
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(500)
+
+    with pytest.raises(OSVError):
+        retry_client(handler, delays).query_batch(QUERIES[:1])
+    assert len(calls) == 4
+    assert delays == [0.5, 1.0, 2.0]
+
+
+@pytest.mark.parametrize("status", [400, 404])
+def test_non_429_client_errors_are_not_retried(status):
+    delays, calls = [], []
+
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(status)
+
+    with pytest.raises(OSVError):
+        retry_client(handler, delays).query_batch(QUERIES[:1])
+    assert len(calls) == 1
+    assert delays == []
+
+
+def test_malformed_body_is_not_retried():
+    delays, calls = [], []
+
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(200, content=b"<html>oops")
+
+    with pytest.raises(OSVError):
+        retry_client(handler, delays).query_batch(QUERIES[:1])
+    assert len(calls) == 1

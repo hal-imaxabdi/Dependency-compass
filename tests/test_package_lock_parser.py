@@ -60,3 +60,23 @@ def test_invalid_and_deep_json_are_reported():
         result = parse_package_lock(text)
         assert result.dependencies == []
         assert len(result.unsupported) == 1
+
+
+def test_v1_depth_limit_is_reported():
+    inner = '{"version": "1.0.0"}'
+    for _ in range(60):
+        inner = '{"version": "1.0.0", "dependencies": {"x": ' + inner + '}}'
+    result = parse_package_lock('{"lockfileVersion": 1, "dependencies": {"top": ' + inner + '}}')
+    assert any("too deeply" in u.reason for u in result.unsupported)
+
+
+def test_alias_name_field_wins_over_path():
+    text = '{"packages": {"node_modules/foo": {"name": "bar", "version": "1.0.0"}}}'
+    result = parse_package_lock(text)
+    assert [d.name for d in result.dependencies] == ["bar"]
+
+
+def test_non_dict_entry_is_reported():
+    result = parse_package_lock('{"packages": {"node_modules/a": "oops"}}')
+    assert result.dependencies == []
+    assert len(result.unsupported) == 1

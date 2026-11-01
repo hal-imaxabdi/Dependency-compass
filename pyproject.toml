@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools==84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dependency-compass"
+version = "0.1.0"
+description = "Dependency vulnerability triage: what to fix first, why, and what couldn't be checked."
+requires-python = ">=3.12"
+# Top-level pins, kept equal to requirements.txt (tests/test_packaging.py checks).
+# Install with `pip install -r requirements.txt` first for the full pinned tree.
+dependencies = [
+    "fastapi==0.162.0",
+    "httpx==0.28.1",
+    "packaging==26.3",
+    "uvicorn==0.54.0",
+]
+
+[project.scripts]
+dependency-compass = "dependency_compass.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["dependency_compass*"]
+
+[tool.setuptools.package-data]
+dependency_compass = ["static/*"]

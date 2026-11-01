@@ -1,0 +1,53 @@
+name: Dependency Compass
+description: Rank dependency vulnerabilities and fail CI on what matters (KEV, severity, blind spots).
+branding:
+  icon: compass
+  color: blue
+
+inputs:
+  file:
+    description: Path to requirements*.txt, package.json or package-lock.json
+    required: true
+  fail-on:
+    description: Fail if a finding is at/above this severity (critical, high, medium, low, any). KEV findings always fail.
+    default: high
+  strict:
+    description: '"true" also fails (exit 4) when anything could not be checked'
+    default: "false"
+
+outputs:
+  exit-code:
+    description: "CLI exit code: 0 ok, 1 findings, 2 bad input, 3 OSV unavailable, 4 incomplete"
+    value: ${{ steps.scan.outputs.exit-code }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: "3.12"
+
+    - name: Install Dependency Compass
+      shell: bash
+      run: |
+        python -m venv "$RUNNER_TEMP/dc-venv"
+        "$RUNNER_TEMP/dc-venv/bin/pip" install --quiet -r "$GITHUB_ACTION_PATH/requirements.txt"
+        "$RUNNER_TEMP/dc-venv/bin/pip" install --quiet --no-deps "$GITHUB_ACTION_PATH"
+
+    # Inputs go through env, never ${{ }} inside the script: a crafted input
+    # can't inject shell commands.
+    - name: Scan
+      id: scan
+      shell: bash
+      env:
+        DC_FILE: ${{ inputs.file }}
+        DC_FAIL_ON: ${{ inputs.fail-on }}
+        DC_STRICT: ${{ inputs.strict }}
+      run: |
+        args=(scan "$DC_FILE" --fail-on "$DC_FAIL_ON")
+        if [ "$DC_STRICT" = "true" ]; then args+=(--strict); fi
+        set +e
+        "$RUNNER_TEMP/dc-venv/bin/dependency-compass" "${args[@]}"
+        code=$?
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        exit "$code"

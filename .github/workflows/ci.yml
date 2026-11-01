@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read   # least privilege: CI never writes to the repo
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.3"
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+
+  # Uses this repo's own action on the deliberately vulnerable sample.
+  # Success here means the action ran and returned exit code 1 (findings).
+  action-demo:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: scan
+        uses: ./
+        continue-on-error: true
+        with:
+          file: dependency_compass/static/sample-requirements.txt
+          fail-on: high
+      - name: Expect exit code 1 (vulnerable sample)
+        env:
+          CODE: ${{ steps.scan.outputs.exit-code }}
+        run: |
+          echo "action exit code: $CODE"
+          test "$CODE" = "1"

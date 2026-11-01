@@ -3,3 +3,5 @@ __pycache__/
 .pytest_cache/
 .env
 project_snapshot.txt
+build/
+*.egg-info/

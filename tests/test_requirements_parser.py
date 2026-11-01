@@ -1,4 +1,8 @@
-from dependency_compass.parsers.requirements import parse_requirements
+import pytest
+
+from dependency_compass.parsers.requirements import (
+    is_dev_requirements_name, parse_requirements,
+)
 
 
 def names(result):
@@ -63,3 +67,18 @@ def test_empty_input():
     r = parse_requirements("")
     assert r.dependencies == [] and r.unsupported == []
     
+
+@pytest.mark.parametrize("name, is_dev", [
+    ("requirements.txt", False),
+    ("requirements-prod.txt", False),
+    ("requirements-dev.txt", True),
+    ("requirements_test.txt", True),
+    ("dev-requirements.txt", True),
+    ("test-requirements.txt", True),
+    ("REQUIREMENTS-TESTING.txt", True),
+    ("requirements-devops.txt", False),   # whole tokens only
+])
+def test_dev_inferred_from_file_name(name, is_dev):
+    assert is_dev_requirements_name(name) is is_dev
+    deps = parse_requirements("flask==2.0.0\n", name).dependencies
+    assert deps[0].is_dev is is_dev

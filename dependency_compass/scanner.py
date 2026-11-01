@@ -22,7 +22,7 @@ KEV_SOURCE = "CISA KEV catalog"
 KEV_UNAVAILABLE_REASON = ("KEV catalog unavailable; known-exploited status "
                           "of findings was not checked")
 KEV_STALE_REASON = "KEV catalog could not be refreshed; using copy released {}"
-_REQUIREMENTS_RE = re.compile(r"requirements[A-Za-z0-9._-]*\.txt")
+_REQUIREMENTS_RE = re.compile(r"[A-Za-z0-9._-]*requirements[A-Za-z0-9._-]*\.txt")
 
 
 class UnsupportedFileError(ValueError):
@@ -70,7 +70,7 @@ def parse_file(filename: str, text: str) -> tuple[str, ParseResult]:
     if _REQUIREMENTS_RE.fullmatch(name):
         return name, parse_requirements(text, name)
     raise UnsupportedFileError(
-        "unsupported file; expected requirements*.txt, package.json "
+        "unsupported file; expected *requirements*.txt, package.json "
         "or package-lock.json")
 
 

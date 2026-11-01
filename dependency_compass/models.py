@@ -16,7 +16,7 @@ class Dependency:
     resolved_version: str | None      # only set when we KNOW the exact version
     source_file: str
     is_direct: bool = True
-    is_dev: bool = False              # True for devDependencies (feeds triage rule 6)
+    is_dev: bool = False              # devDependencies or dev-named requirements file (triage rule 3)
 
 
 @dataclass(frozen=True)

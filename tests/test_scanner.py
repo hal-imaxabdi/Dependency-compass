@@ -145,6 +145,7 @@ def test_too_many_advisories_raises_before_fetching(monkeypatch):
     ("package.json", "package.json"),
     ("../../etc/package-lock.json", "package-lock.json"),
     ("C:\\proj\\requirements-prod.txt", "requirements-prod.txt"),
+    ("dev-requirements.txt", "dev-requirements.txt"),
 ])
 def test_parse_file_dispatches_and_strips_paths(filename, expected):
     text = "{}" if filename.endswith(".json") else ""

@@ -12,6 +12,8 @@ MAX_LINE_LENGTH = 2000
 MAX_DEPENDENCIES = 5000
 _COMMENT_RE = re.compile(r"(^|\s)#.*$")
 _HASH_RE = re.compile(r"\s--hash=\S+")
+_DEV_TOKENS = frozenset({"dev", "develop", "development",
+                         "test", "tests", "testing"})
 
 
 def _truncate(text: str, limit: int = 200) -> str:
@@ -36,6 +38,12 @@ def _logical_lines(text: str):
         yield start, " ".join(buffer)
 
 
+def is_dev_requirements_name(name: str) -> bool:
+    """requirements-dev.txt, dev-requirements.txt, requirements_test.txt..."""
+    stem = name.lower().removesuffix(".txt")
+    return bool(_DEV_TOKENS.intersection(re.split(r"[-_.]+", stem)))
+
+
 def _exact_version(req: Requirement) -> str | None:
     """Return a version only if the specifier pins exactly one concrete release."""
     specs = list(req.specifier)
@@ -48,6 +56,7 @@ def _exact_version(req: Requirement) -> str | None:
 
 def parse_requirements(text: str, source_file: str = "requirements.txt") -> ParseResult:
     result = ParseResult()
+    is_dev = is_dev_requirements_name(source_file)
 
     for line_no, line in _logical_lines(text):
         if len(line) > MAX_LINE_LENGTH:
@@ -87,6 +96,7 @@ def parse_requirements(text: str, source_file: str = "requirements.txt") -> Pars
             version_spec=str(req.specifier),
             resolved_version=_exact_version(req),
             source_file=source_file,
+            is_dev=is_dev,
         ))
 
     return result

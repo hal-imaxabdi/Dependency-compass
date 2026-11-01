@@ -49,3 +49,39 @@ def test_invalid_json_is_reported_not_swallowed():
     assert len(result.unsupported) == 1
     assert result.unsupported[0].line_number is None
     assert "JSON" in result.unsupported[0].reason
+
+
+def test_unsupported_specs_are_reported_not_dropped():
+    text = (
+        '{"dependencies": {"g": "git+https://example.com/g.git", '
+        '"f": "file:../lib", "alias": "npm:other@1.0.0", "ok": "1.0.0"}}'
+    )
+    result = parse_package_json(text)
+    assert [d.name for d in result.dependencies] == ["ok"]
+    assert len(result.unsupported) == 3
+    reasons = " ".join(u.reason for u in result.unsupported)
+    assert "alias" in reasons
+
+
+def test_non_string_spec_is_reported():
+    result = parse_package_json('{"dependencies": {"a": 123}}')
+    assert result.dependencies == []
+    assert len(result.unsupported) == 1
+
+
+def test_deeply_nested_json_does_not_crash():
+    result = parse_package_json("[" * 100000)
+    assert result.dependencies == []
+    assert len(result.unsupported) == 1
+
+
+def test_top_level_must_be_object():
+    result = parse_package_json("[1, 2, 3]")
+    assert result.dependencies == []
+    assert "not an object" in result.unsupported[0].reason
+
+
+def test_peer_dependencies_are_reported():
+    result = parse_package_json('{"peerDependencies": {"react": "^18"}}')
+    assert result.dependencies == []
+    assert any("peer" in u.reason for u in result.unsupported)

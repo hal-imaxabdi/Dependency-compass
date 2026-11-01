@@ -219,3 +219,55 @@ def test_malformed_body_is_not_retried():
     with pytest.raises(OSVError):
         retry_client(handler, delays).query_batch(QUERIES[:1])
     assert len(calls) == 1
+
+
+def test_get_vulnerability_uses_get_and_exact_path():
+    seen = {}
+
+    def handler(request):
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        return httpx.Response(200, json={"id": "GHSA-abcd-1234-wxyz"})
+
+    record = make_client(handler).get_vulnerability("GHSA-abcd-1234-wxyz")
+    assert record["id"] == "GHSA-abcd-1234-wxyz"
+    assert seen == {"method": "GET", "path": "/v1/vulns/GHSA-abcd-1234-wxyz"}
+
+
+@pytest.mark.parametrize("bad_id", [
+    "", "../etc/passwd", "a/b", "GHSA-1?x=1", "a b",
+    "x" * 200, "ID\n", "%2e%2e",
+])
+def test_invalid_vuln_id_rejected_before_any_request(bad_id):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, json={})
+
+    with pytest.raises(OSVError):
+        make_client(handler).get_vulnerability(bad_id)
+    assert calls == []
+
+
+def test_get_vulnerability_404_raises():
+    with pytest.raises(OSVError):
+        make_client(lambda r: httpx.Response(404)).get_vulnerability("CVE-2020-1")
+
+
+def test_get_vulnerability_non_object_body_raises():
+    with pytest.raises(OSVError):
+        make_client(lambda r: httpx.Response(200, json=["x"])).get_vulnerability("CVE-2020-1")
+
+
+def test_get_vulnerability_retries_503():
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(503)
+        return httpx.Response(200, json={"id": "CVE-2020-1"})
+
+    assert make_client(handler).get_vulnerability("CVE-2020-1")["id"] == "CVE-2020-1"
+    assert len(calls) == 2

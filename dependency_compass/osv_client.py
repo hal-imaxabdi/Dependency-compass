@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ MAX_PAGES = 20   # cap on pagination rounds per batch
 MAX_ATTEMPTS = 4   # total tries per request (1 + 3 retries)
 BACKOFF_BASE = 0.5   # seconds; doubles each retry
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+VULN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 TIMEOUT = httpx.Timeout(10.0, connect=5.0)   # explicit: never wait forever
 
 
@@ -36,12 +38,12 @@ class OSVClient:
         self._http = httpx.Client(base_url=base_url, timeout=TIMEOUT,
                                   transport=transport)
 
-    def _send(self, queries: list[dict]) -> httpx.Response:
+    def _send(self, method: str, path: str,
+              json: object = None) -> httpx.Response:
         """POST with retries on transient failures only."""
         for attempt in range(MAX_ATTEMPTS):
             try:
-                response = self._http.post("/v1/querybatch",
-                                           json={"queries": queries})
+                response = self._http.request(method, path, json=json)
             except httpx.TransportError as exc:
                 if attempt == MAX_ATTEMPTS - 1:
                     raise OSVError("OSV unreachable after retries") from exc
@@ -56,7 +58,8 @@ class OSVClient:
     def _post(self, queries: list[dict]) -> list[tuple[list[str], object]]:
         """One request. Returns (vuln ids, next_page_token) per query."""
         try:
-            response = self._send(queries)
+            response = self._send("POST", "/v1/querybatch",
+                                  {"queries": queries})
             response.raise_for_status()
             results = response.json()["results"]
             parsed = [([v["id"] for v in r.get("vulns", [])],
@@ -103,3 +106,17 @@ class OSVClient:
         for start in range(0, len(queries), MAX_BATCH):
             ids.extend(self._query_chunk(queries[start:start + MAX_BATCH]))
         return ids
+
+    def get_vulnerability(self, vuln_id: str) -> dict:
+        """Fetch one full OSV record. Raises OSVError on any problem."""
+        if not isinstance(vuln_id, str) or not VULN_ID_RE.fullmatch(vuln_id):
+            raise OSVError("invalid vulnerability id")
+        try:
+            response = self._send("GET", f"/v1/vulns/{vuln_id}")
+            response.raise_for_status()
+            record = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise OSVError(f"OSV request failed: {type(exc).__name__}") from exc
+        if not isinstance(record, dict):
+            raise OSVError("OSV returned a malformed vulnerability record")
+        return record

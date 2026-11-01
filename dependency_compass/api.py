@@ -57,8 +57,9 @@ MAX_PROXY_HOPS = 10
 STATIC_DIR = Path(__file__).parent / "static"
 API_CSP = "default-src 'none'; frame-ancestors 'none'"
 PAGE_CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; "
-            "connect-src 'self'; img-src 'self'; form-action 'none'; "
-            "base-uri 'none'; frame-ancestors 'none'")
+            "connect-src 'self'; img-src 'self'; font-src 'self'; "
+            "form-action 'none'; base-uri 'none'; frame-ancestors 'none'")
+FONT_CACHE = "public, max-age=604800, immutable"   # fonts never change in place
 SECURITY_HEADERS = {
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
@@ -153,6 +154,8 @@ def create_app(services: Services | None = None,
             response.headers.setdefault(key, value)
         if page and response.status_code == 200:
             response.headers["Content-Security-Policy"] = PAGE_CSP
+            if path.startswith("/static/fonts/"):
+                response.headers["Cache-Control"] = FONT_CACHE
         return response
 
     @app.exception_handler(ApiError)

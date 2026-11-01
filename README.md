@@ -38,7 +38,7 @@ dependency-compass scan requirements.txt --fail-on critical --strict
 **GitHub Action**
 
 ```yaml
-- uses: hal-imaxabdi/Dependency-compass@<commit-sha>   # pin to a commit, not a branch
+- uses: hal-imaxabdi/Dependency-compass@27f92da2bf5c8274e278ad114d976815f20ec256 # v0.1.0
   with:
     file: package-lock.json
     fail-on: high      # critical | high | medium | low | any

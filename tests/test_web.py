@@ -56,9 +56,35 @@ def test_js_never_uses_unsafe_html_sinks():
 
 
 def test_no_external_resources():
+    # Plain <a> links may leave the site; nothing the page *loads* may.
     html = (STATIC_DIR / "index.html").read_text()
-    assert not re.search(r'(src|href)="https?://(?!osv\.dev|www\.cisa\.gov)', html)
-    assert not re.search(r"(src|href)=\"https?://[^\"]*\.(js|css)", html)
+    assert not re.search(r'\bsrc="(https?:)?//', html)
+    for tag in re.findall(r"<link\b[^>]*>", html):
+        assert 'href="/static/' in tag, tag
+    css = (STATIC_DIR / "style.css").read_text()
+    assert not re.search(r"url\((?!\"?/static/)", css)
+    assert "@import" not in css
+
+
+def test_fonts_and_favicon_served_self_hosted():
+    c = client()
+    font = c.get("/static/fonts/Fraunces-latin.woff2")
+    assert font.status_code == 200 and font.content[:4] == b"wOF2"
+    assert "max-age" in font.headers["cache-control"]
+    assert "font-src 'self'" in font.headers["content-security-policy"]
+    assert c.get("/static/favicon.svg").status_code == 200
+    assert c.get("/static/app.js").headers["cache-control"] == "no-store"
+
+
+def test_font_licenses_ship_with_fonts():
+    fonts = STATIC_DIR / "fonts"
+    for name in ("OFL-Fraunces.txt", "OFL-GreatVibes.txt"):
+        assert "SIL Open Font License" in (fonts / name).read_text()
+
+
+def test_favicon_svg_has_no_script():
+    svg = (STATIC_DIR / "favicon.svg").read_text().lower()
+    assert "<script" not in svg and "href" not in svg and " on" not in svg
 
 
 def test_sample_parses_into_pins_and_a_blind_spot():

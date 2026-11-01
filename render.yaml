@@ -15,7 +15,9 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.3
-      - key: DC_TRUST_PROXY
-        value: "0"   # set to "1" once the X-Forwarded-For check is done
+      # Measured X-Forwarded-For on Render: "<client>, <cloudflare>, <internal>"
+      # -> the client is the 3rd entry from the right. See api.py.
+      - key: DC_PROXY_HOPS
+        value: "3"
       - key: DC_LOG_FORWARDED
-        value: "1"   # temporary: logs the raw header for that check
+        value: "0"   # set to "1" to re-check the header if Render changes

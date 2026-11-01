@@ -10,9 +10,9 @@ from test_cli import rec, services
 TEXT = {"content-type": "text/plain; charset=utf-8"}
 
 
-def client(svc=None, limiter=None, trust_proxy=False, raise_errors=True):
+def client(svc=None, limiter=None, proxy_hops=0, raise_errors=True):
     app = create_app(svc or services(), limiter or RateLimiter(1000, 1000),
-                     trust_proxy=trust_proxy)
+                     proxy_hops=proxy_hops)
     return TestClient(app, raise_server_exceptions=raise_errors)
 
 
@@ -102,15 +102,42 @@ def test_429_with_retry_after():
     assert r.status_code == 429 and int(r.headers["retry-after"]) >= 1
 
 
-def test_rate_limit_uses_last_forwarded_ip_only_when_trusted():
-    limiter = RateLimiter(per_client=1, global_limit=100)
-    c = client(limiter=limiter, trust_proxy=True)
-    h = {**TEXT, "x-forwarded-for": "6.6.6.6, 1.1.1.1"}
-    assert post(c, headers=h).status_code == 200
-    # Spoofing the first entry doesn't give a fresh quota.
-    h2 = {**TEXT, "x-forwarded-for": "7.7.7.7, 1.1.1.1"}
-    assert post(c, headers=h2).status_code == 429
-    assert post(c, headers={**TEXT, "x-forwarded-for": "2.2.2.2"}).status_code == 200
+# The header shape measured on Render: spoofed, client, Cloudflare, internal.
+RENDER_XFF = "{spoof}103.184.179.164, 104.23.160.57, 10.28.37.5"
+
+
+def xff(value):
+    return {**TEXT, "x-forwarded-for": value}
+
+
+def test_rate_limit_uses_nth_entry_from_right():
+    c = client(limiter=RateLimiter(per_client=1, global_limit=100), proxy_hops=3)
+    assert post(c, headers=xff(RENDER_XFF.format(spoof=""))).status_code == 200
+    # Spoofed entries on the left don't give a fresh quota.
+    for spoof in ("6.6.6.6, ", "7.7.7.7, 8.8.8.8, "):
+        r = post(c, headers=xff(RENDER_XFF.format(spoof=spoof)))
+        assert r.status_code == 429
+    other = "203.0.113.9, 104.23.160.57, 10.28.37.5"
+    assert post(c, headers=xff(other)).status_code == 200
+
+
+@pytest.mark.parametrize("header", [
+    "104.23.160.57, 10.28.37.5",          # too few entries
+    "not-an-ip, 104.23.160.57, 10.28.37.5",
+    "",
+])
+def test_bad_forwarded_header_falls_back_to_shared_peer_bucket(header):
+    c = client(limiter=RateLimiter(per_client=1, global_limit=100), proxy_hops=3)
+    assert post(c, headers=xff(header)).status_code == 200
+    assert post(c, headers=xff("198.51.100.1, 104.23.160.57, 10.28.37.5")).status_code == 200
+    assert post(c, headers=xff(header)).status_code == 429   # same peer bucket
+
+
+@pytest.mark.parametrize("value, hops", [
+    (None, 0), ("3", 3), ("0", 0), ("-1", 0), ("abc", 0), ("99", 0),
+])
+def test_proxy_hops_from_env(value, hops):
+    assert api.proxy_hops_from_env(value) == hops
 
 
 def test_forwarded_header_ignored_when_not_trusted():

@@ -37,22 +37,24 @@ def test_render_blueprint_uses_safe_start_command():
     assert "--no-proxy-headers" in text and "--port $PORT" in text
     assert "healthCheckPath: /healthz" in text
     assert "--workers" not in text                     # limiter is per process
+    assert 'key: DC_PROXY_HOPS\n        value: "3"' in text
+    assert 'key: DC_LOG_FORWARDED\n        value: "0"' in text
 
 
-@pytest.mark.parametrize("env, trust, docs", [
-    ({}, False, False),
-    ({"DC_TRUST_PROXY": "1", "DC_ENABLE_DOCS": "1"}, True, True),
-    ({"DC_TRUST_PROXY": "true"}, False, False),       # only exactly "1"
+@pytest.mark.parametrize("env, hops, docs", [
+    ({}, 0, False),
+    ({"DC_PROXY_HOPS": "3", "DC_ENABLE_DOCS": "1"}, 3, True),
+    ({"DC_PROXY_HOPS": "three", "DC_ENABLE_DOCS": "true"}, 0, False),
 ])
-def test_app_from_env(monkeypatch, env, trust, docs):
-    for key in ("DC_TRUST_PROXY", "DC_ENABLE_DOCS", "DC_LOG_FORWARDED"):
+def test_app_from_env(monkeypatch, env, hops, docs):
+    for key in ("DC_PROXY_HOPS", "DC_ENABLE_DOCS", "DC_LOG_FORWARDED"):
         monkeypatch.delenv(key, raising=False)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     seen = {}
     monkeypatch.setattr(api, "create_app", lambda **kw: seen.update(kw))
     app_from_env()
-    assert (seen["trust_proxy"], seen["docs"]) == (trust, docs)
+    assert (seen["proxy_hops"], seen["docs"]) == (hops, docs)
 
 
 def forwarded_log(caplog, enabled):

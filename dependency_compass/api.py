@@ -5,9 +5,14 @@ Security decisions:
   at MAX_BODY_BYTES. Not multipart: Starlette spools large multipart uploads
   to a temp file on disk, and uploads must never be stored.
 - File type is checked by name before the body is read (same rules as CLI).
-- Rate limited per client IP and globally (see ratelimit.py). Behind a proxy
-  set DC_TRUST_PROXY=1 to use the last X-Forwarded-For entry (the one our
-  proxy added); earlier entries are client-controlled and ignored.
+- Rate limited per client IP and globally (see ratelimit.py). Behind
+  proxies set DC_PROXY_HOPS=N: the client is the Nth X-Forwarded-For entry
+  from the right. Each proxy appends the address it received from, so the
+  rightmost N entries are written by proxies we trust; anything further left
+  is client-controlled. Measured on Render (Cloudflare -> load balancer ->
+  internal proxy): "<spoofed>, <client>, <cloudflare>, <internal>" -> N=3.
+  Missing or invalid entry -> fall back to the peer address (shared bucket:
+  stricter, never looser).
 - Every error is {"error": "..."} with a fixed message: no stack traces,
   exception text or echoed input. Unexpected errors are logged server-side.
 - OSV failures return 503 and no results (fail closed).
@@ -20,6 +25,7 @@ Run: uvicorn --factory dependency_compass.api:app_from_env
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
 import math
 import os
@@ -47,6 +53,7 @@ MAX_BODY_BYTES = 1024 * 1024
 PER_CLIENT_LIMIT = 10   # scans per minute per IP
 GLOBAL_LIMIT = 60       # scans per minute in total
 MAX_CLIENT_ID = 64
+MAX_PROXY_HOPS = 10
 STATIC_DIR = Path(__file__).parent / "static"
 API_CSP = "default-src 'none'; frame-ancestors 'none'"
 PAGE_CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; "
@@ -74,13 +81,26 @@ def _error(status: int, message: str,
                         headers={**SECURITY_HEADERS, **(headers or {})})
 
 
-def client_id(request: Request, trust_proxy: bool) -> str:
-    if trust_proxy:
-        forwarded = request.headers.get("x-forwarded-for", "")
-        last = forwarded.rsplit(",", 1)[-1].strip()
-        if last:
-            return last[:MAX_CLIENT_ID]
-    return request.client.host if request.client else "unknown"
+def client_id(request: Request, proxy_hops: int) -> str:
+    peer = request.client.host if request.client else "unknown"
+    if proxy_hops <= 0:
+        return peer
+    entries = request.headers.get("x-forwarded-for", "").split(",")
+    if len(entries) < proxy_hops:
+        return peer
+    candidate = entries[-proxy_hops].strip()[:MAX_CLIENT_ID]
+    try:
+        return str(ipaddress.ip_address(candidate))
+    except ValueError:
+        return peer
+
+
+def proxy_hops_from_env(value: str | None) -> int:
+    """0..MAX_PROXY_HOPS; anything else means "don't trust the header"."""
+    if value is None or not value.isdigit():
+        return 0
+    hops = int(value)
+    return hops if hops <= MAX_PROXY_HOPS else 0
 
 
 def _check_content_type(request: Request) -> None:
@@ -116,7 +136,7 @@ def _run_scan(services: Services, filename: str, text: str) -> dict:
 
 def create_app(services: Services | None = None,
                limiter: RateLimiter | None = None,
-               trust_proxy: bool = False, docs: bool = False,
+               proxy_hops: int = 0, docs: bool = False,
                log_forwarded: bool = False) -> FastAPI:
     services = services or default_services()
     limiter = limiter or RateLimiter(PER_CLIENT_LIMIT, GLOBAL_LIMIT)
@@ -169,7 +189,7 @@ def create_app(services: Services | None = None,
             log.info("peer=%s x-forwarded-for=%s",
                      request.client.host if request.client else "unknown",
                      clean_text(request.headers.get("x-forwarded-for", "")))
-        wait = limiter.check(client_id(request, trust_proxy))
+        wait = limiter.check(client_id(request, proxy_hops))
         if wait is not None:
             raise ApiError(429, "too many scans; try again shortly",
                            {"Retry-After": str(max(1, math.ceil(wait)))})
@@ -195,6 +215,7 @@ def create_app(services: Services | None = None,
 def app_from_env() -> FastAPI:
     logging.basicConfig(level=logging.INFO,
                         format="%(levelname)s %(name)s: %(message)s")
-    return create_app(trust_proxy=os.environ.get("DC_TRUST_PROXY") == "1",
+    logging.getLogger("httpx").setLevel(logging.WARNING)   # one line per GET
+    return create_app(proxy_hops=proxy_hops_from_env(os.environ.get("DC_PROXY_HOPS")),
                       docs=os.environ.get("DC_ENABLE_DOCS") == "1",
                       log_forwarded=os.environ.get("DC_LOG_FORWARDED") == "1")

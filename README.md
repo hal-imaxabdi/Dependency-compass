@@ -61,4 +61,4 @@ Exit codes: `0` nothing to fix · `1` something to fix · `2` bad input ·
 - [Security design](docs/security.md): how untrusted files and feeds are handled
 - [Development](docs/development.md): run it locally and contribute
 
-Data from [OSV.dev](https://osv.dev) and CISA KEV. [MIT licensed](LICENSE).
+Data from [OSV.dev](https://osv.dev) and CISA KEV.

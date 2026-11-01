@@ -104,3 +104,46 @@ def test_failure_in_later_batch_raises_not_partial():
 
     with pytest.raises(OSVError):
         make_client(handler).query_batch(big_queries())
+
+
+def test_pagination_requeries_only_paginated_queries_and_merges():
+    bodies = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content)["queries"])
+        if len(bodies) == 1:
+            return httpx.Response(200, json={"results": [
+                {"vulns": [{"id": "A"}], "next_page_token": "t0"},
+                {},
+                {"vulns": [{"id": "C"}]},
+            ]})
+        return httpx.Response(200, json={"results": [{"vulns": [{"id": "B"}]}]})
+
+    queries = [PackageQuery(f"p{i}", Ecosystem.NPM, "1.0.0") for i in range(3)]
+    assert make_client(handler).query_batch(queries) == [["A", "B"], [], ["C"]]
+    assert len(bodies) == 2
+    assert bodies[1] == [{"package": {"name": "p0", "ecosystem": "npm"},
+                          "version": "1.0.0", "page_token": "t0"}]
+
+
+def test_endless_pagination_raises_instead_of_truncating():
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        qs = json.loads(request.content)["queries"]
+        return httpx.Response(200, json={"results": [
+            {"vulns": [{"id": "X"}], "next_page_token": "t"} for _ in qs]})
+
+    with pytest.raises(OSVError):
+        make_client(handler).query_batch(QUERIES[:1])
+    assert len(calls) <= 20
+
+
+def test_non_string_page_token_raises():
+    def handler(request):
+        return httpx.Response(200, json={"results": [
+            {"vulns": [{"id": "X"}], "next_page_token": 123}, {}]})
+
+    with pytest.raises(OSVError):
+        make_client(handler).query_batch(QUERIES)

@@ -5,10 +5,16 @@ import pytest
 
 from dependency_compass import scanner
 from dependency_compass.advisory_cache import AdvisoryCache
+from dependency_compass.kev import KEVCatalog, KEVEntry, KEVSnapshot, KEVStatus
 from dependency_compass.osv_client import OSVClient, OSVError
 from dependency_compass.scanner import (
-    UNPINNED_REASON, UnsupportedFileError, parse_file, scan,
+    KEV_UNAVAILABLE_REASON, UNPINNED_REASON, UnsupportedFileError, parse_file,
+    scan,
 )
+
+KEV_ENTRY = KEVEntry("CVE-2024-0001", "Jinja2 RCE", "2024-05-01",
+                     "2024-05-22", True)
+CATALOG = KEVCatalog({KEV_ENTRY.cve_id: KEV_ENTRY}, "2026-11-01")
 
 
 def rec(vid, name, eco="PyPI", severity="HIGH", fixed="9.9.9", **over):
@@ -40,10 +46,21 @@ class FakeOSV:
         return httpx.Response(200, json=self.records[vid])
 
 
-def run(filename, text, fake):
+class FakeKEV:
+    """Stands in for KEVLookup; counts calls."""
+
+    def __init__(self, snapshot=KEVSnapshot(CATALOG, KEVStatus.OK)):
+        self.snapshot, self.calls = snapshot, 0
+
+    def get(self):
+        self.calls += 1
+        return self.snapshot
+
+
+def run(filename, text, fake, kev=None):
     client = OSVClient(transport=httpx.MockTransport(fake), sleep=lambda s: None)
     name, parsed = parse_file(filename, text)
-    return scan(parsed, name, client, AdvisoryCache(client))
+    return scan(parsed, name, client, AdvisoryCache(client), kev or FakeKEV())
 
 
 def test_vulnerable_and_clean_are_separated():
@@ -142,3 +159,39 @@ def test_parse_file_rejects_unknown_files(filename):
     with pytest.raises(UnsupportedFileError):
         parse_file(filename, "")
         
+
+def test_kev_match_is_aligned_with_advisories():
+    fake = FakeOSV({("jinja2", "2.4.1"): ["PYSEC-1", "PYSEC-2"]},
+                   {"PYSEC-1": rec("PYSEC-1", "jinja2",
+                                   aliases=["CVE-2024-0001"]),
+                    "PYSEC-2": rec("PYSEC-2", "jinja2")})
+    result = run("requirements.txt", "jinja2==2.4.1\n", fake)
+    assert result.kev_status is KEVStatus.OK
+    assert result.findings[0].kev == (KEV_ENTRY, None)
+    assert result.blind_spots == []
+
+
+def test_kev_unavailable_is_unknown_not_false():
+    fake = FakeOSV({("jinja2", "2.4.1"): ["PYSEC-1"]},
+                   {"PYSEC-1": rec("PYSEC-1", "jinja2")})
+    kev = FakeKEV(KEVSnapshot(None, KEVStatus.UNAVAILABLE))
+    result = run("requirements.txt", "jinja2==2.4.1\n", fake, kev)
+    assert result.findings[0].kev is None
+    assert result.kev_status is KEVStatus.UNAVAILABLE
+    assert [b.reason for b in result.blind_spots] == [KEV_UNAVAILABLE_REASON]
+
+
+def test_kev_stale_still_matches_and_reports_release_date():
+    fake = FakeOSV({("jinja2", "2.4.1"): ["CVE-2024-0001"]},
+                   {"CVE-2024-0001": rec("CVE-2024-0001", "jinja2")})
+    kev = FakeKEV(KEVSnapshot(CATALOG, KEVStatus.STALE))
+    result = run("requirements.txt", "jinja2==2.4.1\n", fake, kev)
+    assert result.findings[0].kev == (KEV_ENTRY,)
+    assert "2026-11-01" in result.blind_spots[0].reason
+
+
+def test_kev_not_fetched_when_there_are_no_findings():
+    kev = FakeKEV(KEVSnapshot(None, KEVStatus.UNAVAILABLE))
+    result = run("requirements.txt", "flask==2.0.0\n", FakeOSV({}, {}), kev)
+    assert kev.calls == 0 and result.kev_status is None
+    assert result.blind_spots == []

@@ -8,6 +8,7 @@ from pathlib import PurePosixPath
 
 from dependency_compass.advisory import Advisory
 from dependency_compass.advisory_cache import AdvisoryCache
+from dependency_compass.kev import KEVEntry, KEVLookup, KEVStatus
 from dependency_compass.models import Dependency, Ecosystem, ParseResult
 from dependency_compass.osv_client import OSVClient, OSVError, PackageQuery
 from dependency_compass.parsers.package_json import parse_package_json
@@ -17,6 +18,10 @@ from dependency_compass.parsers.requirements import parse_requirements
 MAX_ADVISORY_FETCHES = 2000   # caps follow-up GETs per scan
 MAX_FILENAME_LENGTH = 255
 UNPINNED_REASON = "version is a range, not an exact pin; not checked"
+KEV_SOURCE = "CISA KEV catalog"
+KEV_UNAVAILABLE_REASON = ("KEV catalog unavailable; known-exploited status "
+                          "of findings was not checked")
+KEV_STALE_REASON = "KEV catalog could not be refreshed; using copy released {}"
 _REQUIREMENTS_RE = re.compile(r"requirements[A-Za-z0-9._-]*\.txt")
 
 
@@ -28,6 +33,8 @@ class UnsupportedFileError(ValueError):
 class Finding:
     dependency: Dependency
     advisories: tuple[Advisory, ...]
+    # Aligned with advisories. None = KEV not checked (never means "not in KEV").
+    kev: tuple[KEVEntry | None, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -43,6 +50,7 @@ class ScanResult:
     findings: list[Finding] = field(default_factory=list)
     clean: list[Dependency] = field(default_factory=list)
     blind_spots: list[BlindSpot] = field(default_factory=list)
+    kev_status: KEVStatus | None = None   # None: no findings to look up
 
 
 def safe_filename(filename: str) -> str:
@@ -84,11 +92,33 @@ def _dedupe(advisories: Iterable[Advisory]) -> tuple[Advisory, ...]:
     return tuple(sorted(kept, key=lambda a: a.id))
 
 
+def _add_kev(result: ScanResult, source_file: str, kev: KEVLookup) -> None:
+    """Mark findings with KEV entries; report it if KEV couldn't be used."""
+    if not result.findings:
+        return
+    snapshot = kev.get()
+    result.kev_status = snapshot.status
+    catalog = snapshot.catalog
+    if catalog is None:
+        result.blind_spots.append(BlindSpot(
+            source_file, KEV_SOURCE, KEV_UNAVAILABLE_REASON))
+        return
+    if snapshot.status is KEVStatus.STALE:
+        result.blind_spots.append(BlindSpot(
+            source_file, KEV_SOURCE, KEV_STALE_REASON.format(catalog.released)))
+    result.findings = [
+        Finding(f.dependency, f.advisories,
+                tuple(catalog.match(a) for a in f.advisories))
+        for f in result.findings]
+
+
 def scan(parsed: ParseResult, source_file: str, client: OSVClient,
-         cache: AdvisoryCache) -> ScanResult:
+         cache: AdvisoryCache, kev: KEVLookup) -> ScanResult:
     """Check every pinned dependency; report everything we could not check.
 
     Fails closed: any OSV problem raises OSVError, never a partial result.
+    A KEV outage doesn't abort the scan; it leaves Finding.kev as None and
+    adds a blind spot.
     """
     result = ScanResult(blind_spots=[
         BlindSpot(source_file, u.content, u.reason, u.line_number)
@@ -119,4 +149,5 @@ def scan(parsed: ParseResult, source_file: str, client: OSVClient,
             result.findings.append(Finding(dep, advisories))
         else:
             result.clean.append(dep)
+    _add_kev(result, source_file, kev)
     return result

@@ -68,7 +68,7 @@ def test_no_external_resources():
 
 def test_fonts_and_favicon_served_self_hosted():
     c = client()
-    font = c.get("/static/fonts/Fraunces-latin.woff2")
+    font = c.get("/static/fonts/Inter-latin.woff2")
     assert font.status_code == 200 and font.content[:4] == b"wOF2"
     assert "max-age" in font.headers["cache-control"]
     assert "font-src 'self'" in font.headers["content-security-policy"]
@@ -78,7 +78,7 @@ def test_fonts_and_favicon_served_self_hosted():
 
 def test_font_licenses_ship_with_fonts():
     fonts = STATIC_DIR / "fonts"
-    for name in ("OFL-Fraunces.txt", "OFL-GreatVibes.txt"):
+    for name in ("OFL-Inter.txt", "OFL-JetBrainsMono.txt", "OFL-GreatVibes.txt"):
         assert "SIL Open Font License" in (fonts / name).read_text()
 
 

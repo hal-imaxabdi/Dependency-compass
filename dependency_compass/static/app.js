@@ -3,12 +3,10 @@
 
 const MAX_BYTES = 1024 * 1024;
 const WAKE_NOTE_MS = 4000;
-const SHOWN_ADVISORIES = 3;   // worst first; the rest collapse
 const SEVERITIES = ["critical", "high", "unknown", "medium", "low"];
 const KNOWN_TYPES = ["requirements.txt", "requirements-dev.txt",
                      "package-lock.json", "package.json"];
 const $ = (id) => document.getElementById(id);
-const reduceMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 let uploadedName = null;   // set when a file is chosen; cleared on paste/type change
 let uploadedText = "";
@@ -26,14 +24,10 @@ function sevClass(severity) {
   return SEVERITIES.includes(severity) ? severity : "unknown";
 }
 
-function chip(text, kind) {
-  return el("li", `chip ${kind || ""}`.trim(), text);
-}
-
-function sevChip(severity) {
-  const li = el("li", "chip sev");
-  li.append(el("span", `dot s-${sevClass(severity)}`), severity);
-  return li;
+function sevLabel(severity) {
+  const label = el("span", "sev");
+  label.append(el("span", `dot s-${sevClass(severity)}`), severity);
+  return label;
 }
 
 function setStatus(text, kind) {
@@ -43,160 +37,79 @@ function setStatus(text, kind) {
   status.textContent = text || "";
 }
 
-// ---- Theme ----------------------------------------------------------------
-
-function storedTheme() {
-  try { return localStorage.getItem("dc-theme"); } catch (_) { return null; }
-}
-
-function applyTheme(theme) {
-  if (theme === "light" || theme === "dark") {
-    document.documentElement.dataset.theme = theme;
-  }
-}
-
-function toggleTheme() {
-  const current = document.documentElement.dataset.theme ||
-    (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-  const next = current === "dark" ? "light" : "dark";
-  applyTheme(next);
-  try { localStorage.setItem("dc-theme", next); } catch (_) { /* private mode */ }
-}
-
-// ---- Compass needle ---------------------------------------------------------
-
-function needle(state) {
-  const rose = $("rose");
-  rose.classList.toggle("seeking", state === "seeking");
-  rose.classList.toggle("settled", state === "settled");
-}
-
-// ---- Results: summary -------------------------------------------------------
-
-function headline(s) {
-  if (s.findings) {
-    return "Most urgent first. Each card says why it ranks there and what to upgrade to.";
-  }
-  if (s.blind_spots && !s.clean) {
-    return `Nothing could be checked: ${s.blind_spots} item(s) were NOT checked ` +
-      `(see Uncharted below).`;
-  }
-  if (s.blind_spots) {
-    return `No known vulnerabilities in the ${s.clean} package(s) we could check, ` +
-      `but ${s.blind_spots} item(s) were NOT checked.`;
-  }
-  return `No known vulnerabilities in ${s.clean} checked package(s).`;
-}
-
-function countUp(node, target) {
-  if (reduceMotion() || target === 0) {
-    node.textContent = String(target);
-    return;
-  }
-  const start = performance.now();
-  const duration = 700;
-  const step = (now) => {
-    const t = Math.min(1, (now - start) / duration);
-    node.textContent = String(Math.round(target * (1 - Math.pow(1 - t, 3))));
-    if (t < 1) requestAnimationFrame(step);
-  };
-  requestAnimationFrame(step);
-}
-
-function tile(label, value, kind) {
-  const box = el("div", `tile ${kind || ""}`.trim());
-  const number = el("p", "tile-value", "0");
-  box.append(el("p", "tile-label", label), number);
-  countUp(number, value);
-  return box;
-}
-
-function tiles(s) {
-  const grid = el("div", "tiles");
-  grid.append(
-    tile("Vulnerable packages", s.findings, s.findings ? "alert" : ""),
-    tile("Actively exploited (KEV)", s.in_kev, s.in_kev ? "alert" : ""),
-    tile("Not checked", s.blind_spots, s.blind_spots ? "caution" : ""),
-    tile("No known advisories", s.clean));
-  return grid;
-}
-
-function severityMix(findings) {
-  const counts = Object.fromEntries(SEVERITIES.map((s) => [s, 0]));
-  findings.forEach((f) => { counts[sevClass(f.worst_severity)] += 1; });
-  const box = el("section", "sevmix");
-  box.setAttribute("aria-label", "Packages by worst severity");
-  box.append(el("p", "sevmix-title", "Packages by worst severity"));
-  const bar = el("div", "sevbar");
-  bar.setAttribute("role", "img");
-  bar.setAttribute("aria-label", SEVERITIES.filter((s) => counts[s])
-    .map((s) => `${counts[s]} ${s}`).join(", "));
-  const legend = el("ul", "legend");
-  SEVERITIES.forEach((s) => {
-    if (!counts[s]) return;
-    const part = el("span", `s-${s}`);
-    part.style.flexGrow = String(counts[s]);   // CSSOM: allowed by our CSP
-    part.title = `${s}: ${counts[s]}`;
-    bar.append(part);
-    const item = el("li");
-    const n = el("b", null, String(counts[s]));
-    item.append(el("span", `swatch s-${s}`), n, ` ${s}`);
-    legend.append(item);
-  });
-  box.append(bar, legend);
-  return box;
-}
-
-function kevBanner(status) {
-  if (status !== "unavailable" && status !== "stale") return null;
-  const text = status === "unavailable"
-    ? "The CISA KEV catalog was unavailable, so exploitation status is unknown " +
-      "for these findings. Unknown, not “not exploited”."
-    : "The CISA KEV catalog couldn't be refreshed; an older copy was used " +
-      "(see Uncharted).";
-  const banner = el("p", "banner");
-  banner.append(el("span", "banner-icon", "!"), text);
-  return banner;
-}
-
-// ---- Results: finding cards ------------------------------------------------
+// ---- Copy -----------------------------------------------------------------
 
 function pinFor(f) {
   return f.ecosystem === "PyPI" ? `${f.package}==${f.upgrade.version}`
                                 : `${f.package}@${f.upgrade.version}`;
 }
 
-async function copyPin(button, text) {
+async function copyText(button, text, label) {
   try {
     await navigator.clipboard.writeText(text);
     button.textContent = "Copied";
     button.classList.add("done");
   } catch (_) {
-    button.textContent = text;   // clipboard blocked: show it to copy by hand
+    setStatus(`Copy blocked by the browser. Text: ${text}`, "error");
   }
   setTimeout(() => {
-    button.textContent = "Copy";
+    button.textContent = label;
     button.classList.remove("done");
-  }, 1800);
+  }, 1600);
 }
 
-function upgradeBox(f) {
-  const up = f.upgrade;
-  const box = el("div", "upgrade");
-  const main = el("div", "upgrade-main");
-  const title = el("span", "upgrade-title", "Upgrade to ");
-  title.append(el("code", null, up.version));
-  const covers = up.fixes === up.total ? `fixes all ${up.total}` : `fixes ${up.fixes} of ${up.total}`;
-  const sub = el("span", "upgrade-sub", `${covers} advisories`);
-  if (up.major_bump) sub.append(" · ", el("span", "major", "major version: check for breaking changes"));
-  main.append(title, sub);
-  const copy = el("button", "copy-btn", "Copy");
-  copy.type = "button";
-  const pin = pinFor(f);
-  copy.setAttribute("aria-label", `Copy ${pin}`);
-  copy.addEventListener("click", () => copyPin(copy, pin));
-  box.append(main, copy);
-  return box;
+function copyButton(text, label, aria) {
+  const button = el("button", "btn small", label);
+  button.type = "button";
+  button.setAttribute("aria-label", aria);
+  button.addEventListener("click", () => copyText(button, text, label));
+  return button;
+}
+
+// ---- Results ----------------------------------------------------------------
+
+function summary(s) {
+  const list = el("ul", "summary");
+  const item = (value, label, kind) => {
+    const li = el("li", value ? kind : "");
+    li.append(el("b", null, String(value)), el("span", null, label));
+    return li;
+  };
+  list.append(item(s.findings, "vulnerable", "bad"),
+              item(s.in_kev, "actively exploited", "bad"),
+              item(s.blind_spots, "not checked", "warn"),
+              item(s.clean, "no known issues", ""));
+  return list;
+}
+
+function banners(data) {
+  const out = [];
+  const status = data.summary.kev_status;
+  if (status === "unavailable") {
+    out.push(el("p", "banner", "The CISA KEV list was unavailable, so we couldn't " +
+      "check which of these are actively exploited. Treat that as unknown."));
+  } else if (status === "stale") {
+    out.push(el("p", "banner", "The CISA KEV list couldn't be refreshed; an older " +
+      "copy was used."));
+  }
+  if (data.hint) out.push(el("p", "banner tip", data.hint));
+  return out;
+}
+
+function fixCell(f) {
+  const cell = el("div", "fixcell");
+  if (f.upgrade) {
+    cell.append(el("span", "to", `→ ${f.upgrade.version}`));
+    if (f.upgrade.major_bump) {
+      const major = el("span", "major", "major");
+      major.title = "Major version upgrade: check for breaking changes";
+      cell.append(major);
+    }
+    cell.append(copyButton(pinFor(f), "Copy", `Copy ${pinFor(f)}`));
+  } else {
+    cell.append(el("span", "none", f.fix === "none" ? "No fix yet" : "See details"));
+  }
+  return cell;
 }
 
 function advisoryItem(a) {
@@ -205,98 +118,96 @@ function advisoryItem(a) {
   const link = el("a", "advisory-id", a.id);
   link.href = `https://osv.dev/vulnerability/${encodeURIComponent(a.id)}`;
   link.rel = "noopener noreferrer";
-  const sev = el("span", "advisory-sev");
-  sev.append(el("span", `dot s-${sevClass(a.severity)}`), a.severity);
-  top.append(link, sev);
-  if (a.in_kev) top.append(el("span", "chip kev", "KEV"));
-  if (a.kev && a.kev.known_ransomware) top.append(el("span", "chip kev", "ransomware"));
+  top.append(link, sevLabel(a.severity));
+  if (a.in_kev) top.append(el("span", "tag kev", "exploited"));
   li.append(top);
-  if (a.summary) li.append(el("p", "summary", a.summary));
-  const fix = el("p", "fix");
-  if (a.fixed_versions.length) {
-    fix.append("Fixed in ");
-    a.fixed_versions.forEach((v, i) => {
-      if (i) fix.append(", ");
-      fix.append(el("code", null, v));
-    });
-  } else {
-    fix.textContent = "No fix yet";
-  }
-  li.append(fix);
+  if (a.summary) li.append(el("p", null, a.summary));
+  li.append(el("p", "fix", a.fixed_versions.length
+    ? `Fixed in ${a.fixed_versions.join(", ")}` : "No fix yet"));
   return li;
 }
 
-function advisoryList(items) {
-  const list = el("ul", "advisories");
-  items.forEach((a) => list.append(advisoryItem(a)));
-  return list;
-}
-
-function findingCard(f, index) {
-  const card = el("li", `finding sev-${sevClass(f.worst_severity)}${f.in_kev ? " kev" : ""}`);
-  card.style.setProperty("--i", String(index));
-
-  const rank = el("div", "rank", String(f.rank));
-  rank.prepend(el("small", null, "No."));
-  const body = el("div", "finding-body");
-
-  const head = el("div", "finding-head");
-  const name = el("h3", "pkg", f.package);
-  name.append(" ", el("span", "ver", f.version));
-  head.append(name);
-  body.append(head);
-
-  const chips = el("ul", "chips");
-  if (f.in_kev) chips.append(chip("Actively exploited (KEV)", "kev"));
-  else if (f.in_kev === null) chips.append(chip("KEV status unknown", "unknown-kev"));
-  chips.append(sevChip(f.worst_severity), chip(f.ecosystem),
-               chip(f.dev ? "dev" : "prod"), chip(f.direct ? "direct" : "transitive"));
-  if (f.fix === "partial") chips.append(chip("partial fix", "partial"));
-  if (f.fix === "none") chips.append(chip("no fix yet", "nofix"));
-  body.append(chips);
-
-  if (f.upgrade) body.append(upgradeBox(f));
-
-  body.append(advisoryList(f.advisories.slice(0, SHOWN_ADVISORIES)));
-  const rest = f.advisories.slice(SHOWN_ADVISORIES);
-  if (rest.length) {
-    const more = el("details", "more");
-    more.append(el("summary", null, `${rest.length} more advisories`), advisoryList(rest));
-    body.append(more);
+function detailPanel(f, id) {
+  const panel = el("div", "row-detail");
+  panel.id = id;
+  panel.hidden = true;
+  if (f.upgrade) {
+    const covers = f.upgrade.fixes === f.upgrade.total
+      ? `all ${f.upgrade.total}` : `${f.upgrade.fixes} of ${f.upgrade.total}`;
+    const note = f.upgrade.major_bump ? " This is a major version upgrade: check for breaking changes." : "";
+    panel.append(el("p", null, `Upgrading to ${f.upgrade.version} fixes ${covers} advisories.${note}`));
   }
-
-  const why = el("details", "why");
-  why.open = f.rank <= 3;
-  why.append(el("summary", null, "Why it ranks here"));
-  const reasons = el("ol");
+  panel.append(el("h4", null, "Why it ranks here"));
+  const reasons = el("ol", "reasons");
   f.reasons.forEach((r) => reasons.append(el("li", null, r)));
-  why.append(reasons);
-  body.append(why);
-
-  card.append(rank, body);
-  return card;
+  panel.append(reasons);
+  panel.append(el("h4", null, `Advisories (${f.advisories.length})`));
+  const list = el("ul", "advisories");
+  f.advisories.forEach((a) => list.append(advisoryItem(a)));
+  panel.append(list);
+  return panel;
 }
 
-// ---- Results: blind spots & clean -------------------------------------------
+function row(f) {
+  const li = el("li", `row${f.in_kev ? " kev" : ""}`);
+  const main = el("div", "row-main");
 
-function uncharted(items) {
-  const section = el("section", "uncharted");
-  section.append(el("h3", null, `Uncharted (${items.length})`),
-    el("p", "uncharted-sub", "What we couldn't check. Never counted as clean."));
-  const list = el("ul");
+  const pkg = el("div", "pkg");
+  const name = el("div", "pkg-name", f.package);
+  name.append(" ", el("span", "ver", f.version));
+  const meta = el("div", "pkg-meta",
+    `${f.ecosystem} · ${f.dev ? "dev" : "prod"} · ${f.direct ? "direct" : "transitive"}`);
+  if (f.in_kev) meta.append(el("span", "tag kev", "actively exploited"));
+  else if (f.in_kev === null) meta.append(el("span", "tag warn", "KEV unknown"));
+  pkg.append(name, meta);
+
+  const id = `detail-${f.rank}`;
+  const toggle = el("button", "toggle", "Details");
+  toggle.type = "button";
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.setAttribute("aria-controls", id);
+  const panel = detailPanel(f, id);
+  toggle.addEventListener("click", () => {
+    const open = toggle.getAttribute("aria-expanded") !== "true";
+    toggle.setAttribute("aria-expanded", String(open));
+    panel.hidden = !open;
+  });
+
+  main.append(el("span", "rank", String(f.rank)), pkg, sevLabel(f.worst_severity),
+              fixCell(f), toggle);
+  li.append(main, panel);
+  return li;
+}
+
+function findingsList(findings) {
+  const frag = document.createDocumentFragment();
+  const head = el("div", "list-head");
+  head.setAttribute("aria-hidden", "true");
+  ["#", "Package", "Severity", "Upgrade to", ""].forEach((t) => head.append(el("span", null, t)));
+  const rows = el("ol", "rows");
+  rows.setAttribute("aria-label", "Vulnerable packages, most urgent first");
+  findings.forEach((f) => rows.append(row(f)));
+  frag.append(head, rows);
+  return frag;
+}
+
+function uncheckedList(items) {
+  const frag = document.createDocumentFragment();
+  frag.append(el("h3", "section-title", `Not checked (${items.length})`),
+              el("p", "section-sub", "We couldn't verify these, so they are not counted as safe."));
+  const list = el("ul", "unchecked");
   items.forEach((b) => {
     const li = el("li");
-    const where = b.line !== null ? `${b.file}:${b.line}` : b.file;
-    li.append(el("span", "where", b.content ? `${where}  ${b.content}` : where),
-              el("span", "reason", b.reason));
+    const where = b.line !== null ? `line ${b.line}: ` : "";
+    li.append(el("span", "what", `${where}${b.content || b.file}`), el("span", "why", b.reason));
     list.append(li);
   });
-  section.append(list);
-  return section;
+  frag.append(list);
+  return frag;
 }
 
 function cleanList(items) {
-  const details = el("details", "clean");
+  const details = el("details", "clean-list");
   details.append(el("summary", null, `${items.length} package(s) with no known advisories`));
   const list = el("ul");
   items.forEach((d) => list.append(el("li", null, `${d.package} ${d.version}`)));
@@ -309,51 +220,42 @@ function render(data) {
   results.replaceChildren();
 
   const head = el("div", "results-head");
-  const title = el("h2", null, "Bearings for ");
-  title.append(el("span", "file", data.file));
+  const title = el("h2", null, "Results for ");
+  title.append(el("code", null, data.file));
   head.append(title);
-  results.append(head, el("p", "headline", headline(data.summary)));
-
-  results.append(tiles(data.summary));
-  if (data.hint) {
-    const tip = el("p", "banner tip");
-    tip.append(el("span", "banner-icon", "i"), data.hint);
-    results.append(tip);
+  const pins = data.findings.filter((f) => f.upgrade).map(pinFor);
+  if (pins.length) {
+    head.append(copyButton(pins.join("\n"), "Copy all fixes",
+      `Copy ${pins.length} upgrade pins`));
+    head.lastChild.className = "btn";
   }
-  const banner = kevBanner(data.summary.kev_status);
-  if (banner) results.append(banner);
+  results.append(head, summary(data.summary), ...banners(data));
 
   if (data.findings.length) {
-    results.append(severityMix(data.findings));
-    const list = el("ol", "findings");
-    list.setAttribute("aria-label", "Findings, most urgent first");
-    data.findings.forEach((f, i) => list.append(findingCard(f, i)));
-    results.append(list);
+    results.append(findingsList(data.findings));
   } else if (!data.blind_spots.length) {
     const ok = el("div", "all-clear");
-    ok.append(el("strong", null, "Clear skies."),
-              el("span", null, "No known advisories for anything we checked."));
+    ok.append(el("b", null, "No known vulnerabilities."),
+              el("span", null, "Nothing we checked has a published advisory."));
     results.append(ok);
   }
-  if (data.blind_spots.length) results.append(uncharted(data.blind_spots));
+  if (data.blind_spots.length) results.append(uncheckedList(data.blind_spots));
   if (data.clean.length) results.append(cleanList(data.clean));
   results.hidden = false;
 }
 
 function showSkeleton() {
-  const results = $("results");
   const sk = el("div", "skeleton");
   sk.setAttribute("aria-hidden", "true");
-  for (let i = 0; i < 3; i += 1) sk.append(el("div"));
-  results.replaceChildren(sk);
-  results.hidden = false;
+  for (let i = 0; i < 4; i += 1) sk.append(el("div"));
+  $("results").replaceChildren(sk);
+  $("results").hidden = false;
 }
 
 function clearResults() {
   // New input: old results would describe a different file.
   $("results").hidden = true;
   $("results").replaceChildren();
-  needle("idle");
 }
 
 // ---- Scanning ---------------------------------------------------------------
@@ -370,10 +272,12 @@ async function errorMessage(response) {
   return `Scan failed (HTTP ${response.status}).`;
 }
 
+function activeTab() {
+  return $("tab-paste").getAttribute("aria-selected") === "true" ? "paste" : "upload";
+}
+
 function currentInput() {
-  if (activeTab() === "upload") {
-    return {text: uploadedText, filename: uploadedName};
-  }
+  if (activeTab() === "upload") return {text: uploadedText, filename: uploadedName};
   return {text: $("content").value, filename: $("filetype").value};
 }
 
@@ -382,17 +286,15 @@ async function scan(event) {
   const {text, filename} = currentInput();
   if (!filename || !text.trim()) {
     return setStatus(activeTab() === "upload"
-      ? "Choose or drop a file first, or switch to Paste."
-      : "Paste a manifest first.", "error");
+      ? "Choose or drop a file first, or switch to Paste text."
+      : "Paste the file's contents first.", "error");
   }
-  if (new Blob([text]).size > MAX_BYTES) {
-    return setStatus("File is larger than 1 MB.", "error");
-  }
+  if (new Blob([text]).size > MAX_BYTES) return setStatus("File is larger than 1 MB.", "error");
   const button = $("scan-btn");
   button.disabled = true;
+  button.textContent = "Scanning…";
   setStatus("");
   showSkeleton();
-  needle("seeking");
   const wake = setTimeout(() => setStatus(
     "Still working: the free server may be waking up (up to ~30 s on first use)."),
     WAKE_NOTE_MS);
@@ -407,22 +309,17 @@ async function scan(event) {
     }
     render(await response.json());
     setStatus("");
-    needle("settled");
-    $("results").scrollIntoView({behavior: reduceMotion() ? "auto" : "smooth", block: "start"});
   } catch (_) {
     clearResults();
     setStatus("Could not reach the server. Check your connection and retry.", "error");
   } finally {
     clearTimeout(wake);
     button.disabled = false;
+    button.textContent = "Scan";
   }
 }
 
 // ---- Input: tabs, upload, drag & drop, sample ------------------------------
-
-function activeTab() {
-  return $("tab-paste").getAttribute("aria-selected") === "true" ? "paste" : "upload";
-}
 
 function selectTab(name) {
   const upload = name === "upload";
@@ -432,6 +329,7 @@ function selectTab(name) {
   $("tab-paste").tabIndex = upload ? -1 : 0;
   $("panel-upload").hidden = !upload;
   $("panel-paste").hidden = upload;
+  clearResults();
 }
 
 function tabKeys(event) {
@@ -441,17 +339,12 @@ function tabKeys(event) {
   $(`tab-${next}`).focus();
 }
 
-function resetDropzone() {
-  $("dropzone").classList.remove("loaded");
-  $("dropzone-title").replaceChildren("Drop your manifest here, or ",
-                                      el("u", null, "browse"));
-}
-
 function clearUpload() {
   uploadedName = null;
   uploadedText = "";
   $("file").value = "";
-  resetDropzone();
+  $("dropzone").classList.remove("loaded");
+  $("dropzone-title").replaceChildren("Drop a file here or ", el("u", null, "choose one"));
 }
 
 async function takeFile(file) {
@@ -465,7 +358,7 @@ async function takeFile(file) {
   uploadedName = file.name;
   if (KNOWN_TYPES.includes(file.name)) $("filetype").value = file.name;
   $("dropzone").classList.add("loaded");
-  $("dropzone-title").textContent = `${file.name} is ready. Take bearings below.`;
+  $("dropzone-title").textContent = `${file.name} ready. Press Scan.`;
   setStatus("");
 }
 
@@ -487,21 +380,18 @@ async function loadSample() {
   try {
     const response = await fetch("/static/sample-requirements.txt");
     if (!response.ok) throw new Error();
+    const text = await response.text();
     clearUpload();
-    clearResults();
     selectTab("paste");
-    $("content").value = await response.text();
+    $("content").value = text;
     $("filetype").value = "requirements.txt";
-    setStatus("Sample loaded: six old, vulnerable pins and one range. Take bearings.");
-    $("scan-btn").focus();
+    $("scan-form").requestSubmit();   // one click: load and scan
   } catch (_) {
     setStatus("Could not load the sample.", "error");
   }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  applyTheme(storedTheme());
-  $("theme-toggle").addEventListener("click", toggleTheme);
   $("scan-form").addEventListener("submit", scan);
   $("sample-btn").addEventListener("click", loadSample);
   $("tab-upload").addEventListener("click", () => selectTab("upload"));

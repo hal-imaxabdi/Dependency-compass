@@ -5,5 +5,5 @@ requests==2.19.0
 pyyaml==5.3
 urllib3==1.24.1
 flask==2.0.0
-# Unpinned: shows up under "blind spots", never as clean.
+# Unpinned: listed under "Not checked", never counted as safe.
 numpy>=1.20

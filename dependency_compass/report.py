@@ -16,6 +16,7 @@ from dependency_compass.triage import (
 SCHEMA_VERSION = 1
 MAX_TEXT = 200
 MAX_LISTED_FIXES = 5
+MAX_LISTED_ADVISORIES = 3   # text report only; worst first, JSON has all
 LOCKFILE_HINT = ("package.json only lists version ranges. Scan package-lock.json "
                  "instead: it has the exact installed versions.")
 # C0/C1 controls (incl. ESC for ANSI sequences) and bidi overrides.
@@ -139,11 +140,14 @@ def _finding_lines(f: dict) -> list[str]:
              f"[{f['ecosystem']} · {scope} · {kind}]"]
     if f["upgrade"]:
         lines.append(f"    → {upgrade_line(f['upgrade'])}")
-    for a in f["advisories"]:
+    for a in f["advisories"][:MAX_LISTED_ADVISORIES]:
         kev = "  [KEV]" if a["in_kev"] else ""
         summary = f"  {a['summary']}" if a["summary"] else ""
         lines.append(f"    - {a['id']} ({a['severity']}){kev}{summary}")
         lines.append(f"      {_fixes(a)}")
+    hidden = len(f["advisories"]) - MAX_LISTED_ADVISORIES
+    if hidden > 0:
+        lines.append(f"    + {hidden} more (use --json for the full list)")
     lines.append("    Why it ranks here:")
     lines.extend(f"      · {r}" for r in f["reasons"])
     return lines

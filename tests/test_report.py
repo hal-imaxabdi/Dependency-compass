@@ -74,3 +74,15 @@ def test_nothing_checked_headline_and_lockfile_hint():
 def test_no_hint_for_lockfile():
     result = ScanResult(blind_spots=[BlindSpot("package-lock.json", "x", "y", None)])
     assert to_dict(result, [], "package-lock.json")["hint"] is None
+
+
+def test_text_report_lists_only_worst_advisories():
+    advs = tuple(Advisory(f"GHSA-{i}", (), "", "high", ("2.0.0",), "2026-01-01", False)
+                 for i in range(5))
+    dep = Dependency("pkg", Ecosystem.NPM, "1.0.0", "1.0.0", "package-lock.json")
+    result = ScanResult(findings=[Finding(dep, advs, (None,) * 5)])
+    data = to_dict(result, rank_findings(result.findings), "package-lock.json")
+    text = render_text(data)
+    assert text.count("    - GHSA-") == 3
+    assert "+ 2 more (use --json for the full list)" in text
+    assert len(data["findings"][0]["advisories"]) == 5      # JSON keeps all

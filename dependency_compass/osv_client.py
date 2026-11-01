@@ -11,6 +11,10 @@ MAX_BATCH = 1000   # OSV's per-request query limit (batch splitting comes later)
 TIMEOUT = httpx.Timeout(10.0, connect=5.0)   # explicit: never wait forever
 
 
+class OSVError(Exception):
+    """OSV was unreachable or returned data we cannot trust."""
+
+
 @dataclass(frozen=True)
 class PackageQuery:
     name: str
@@ -31,7 +35,14 @@ class OSVClient:
              "version": q.version}
             for q in queries
         ]}
-        response = self._http.post("/v1/querybatch", json=body)
-        response.raise_for_status()
-        results = response.json()["results"]
-        return [[v["id"] for v in r.get("vulns", [])] for r in results]
+        try:
+            response = self._http.post("/v1/querybatch", json=body)
+            response.raise_for_status()
+            results = response.json()["results"]
+            ids = [[v["id"] for v in r.get("vulns", [])] for r in results]
+        except (httpx.HTTPError, ValueError, KeyError,
+                TypeError, AttributeError) as exc:
+            raise OSVError(f"OSV request failed: {type(exc).__name__}") from exc
+        if len(ids) != len(queries):
+            raise OSVError("OSV returned a mismatched result count")
+        return ids

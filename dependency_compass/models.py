@@ -16,11 +16,12 @@ class Dependency:
     resolved_version: str | None      # only set when we KNOW the exact version
     source_file: str
     is_direct: bool = True
+    is_dev: bool = False              # True for devDependencies (feeds triage rule 6)
 
 
 @dataclass(frozen=True)
 class UnsupportedEntry:
-    line_number: int
+    line_number: int | None           # None when the format has no lines (JSON)
     content: str                      # truncated; it is untrusted input
     reason: str
 

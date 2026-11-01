@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
@@ -16,6 +17,7 @@ from dependency_compass.parsers.package_lock import parse_package_lock
 from dependency_compass.parsers.requirements import parse_requirements
 
 MAX_ADVISORY_FETCHES = 2000   # caps follow-up GETs per scan
+FETCH_WORKERS = 8   # parallel GETs; bounded so we don't hammer OSV
 MAX_FILENAME_LENGTH = 255
 UNPINNED_REASON = "version is a range, not an exact pin; not checked"
 KEV_SOURCE = "CISA KEV catalog"
@@ -123,6 +125,19 @@ def _add_kev(result: ScanResult, source_file: str, kev: KEVLookup) -> None:
         for f in result.findings]
 
 
+def _fetch_all(fetches: set[tuple[str, str, Ecosystem]],
+               cache: AdvisoryCache) -> dict[tuple, Advisory]:
+    """Fetch advisories in parallel. Any failure cancels the rest and raises."""
+    if not fetches:
+        return {}
+    pool = ThreadPoolExecutor(max_workers=min(FETCH_WORKERS, len(fetches)))
+    try:
+        futures = {pool.submit(cache.get, *f): f for f in fetches}
+        return {futures[fut]: fut.result() for fut in as_completed(futures)}
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
 def scan(parsed: ParseResult, source_file: str, client: OSVClient,
          cache: AdvisoryCache, kev: KEVLookup) -> ScanResult:
     """Check every pinned dependency; report everything we could not check.
@@ -152,10 +167,11 @@ def scan(parsed: ParseResult, source_file: str, client: OSVClient,
     fetches = {(vid, k[0], k[1]) for k, ids in ids_per_key.items() for vid in ids}
     if len(fetches) > MAX_ADVISORY_FETCHES:
         raise OSVError("too many advisories to fetch in one scan")
+    fetched = _fetch_all(fetches, cache)
 
     for dep in pinned:
         ids = ids_per_key[_key(dep)]
-        advisories = _dedupe(cache.get(v, dep.name, dep.ecosystem) for v in ids)
+        advisories = _dedupe(fetched[(v, dep.name, dep.ecosystem)] for v in ids)
         if advisories:
             result.findings.append(Finding(dep, advisories))
         else:

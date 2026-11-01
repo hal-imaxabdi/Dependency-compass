@@ -78,3 +78,29 @@ def test_withdrawn_is_flagged():
 def test_untrustworthy_records_raise(bad):
     with pytest.raises(OSVError):
         parse_advisory(bad, "lodash", Ecosystem.NPM)
+
+
+def test_ranges_are_paired_and_git_ranges_skipped():
+    rec = record(affected=[{"package": {"name": "lodash", "ecosystem": "npm"},
+                            "ranges": [
+        {"type": "GIT", "events": [{"introduced": "0"}, {"fixed": "a1b2c3d"}]},
+        {"type": "SEMVER", "events": [
+            {"introduced": "0"}, {"fixed": "4.17.19"},
+            {"introduced": "5.0.0"}, {"last_affected": "5.1.0"},
+            {"introduced": "6.0.0"}]}]}])
+    adv = parse_advisory(rec, "lodash", Ecosystem.NPM)
+    assert adv.fixed_versions == ("4.17.19",)          # no commit hash
+    assert adv.ranges == (("0", "4.17.19", None), ("5.0.0", None, "5.1.0"),
+                          ("6.0.0", None, None))
+
+
+@pytest.mark.parametrize("events", [
+    [{"introduced": 0}],
+    [{"introduced": "0"}, {"fixed": "x" * 200}],
+    ["not a dict"],
+])
+def test_malformed_range_events_raise(events):
+    rec = record(affected=[{"package": {"name": "lodash", "ecosystem": "npm"},
+                            "ranges": [{"type": "SEMVER", "events": events}]}])
+    with pytest.raises(OSVError):
+        parse_advisory(rec, "lodash", Ecosystem.NPM)

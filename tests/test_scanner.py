@@ -1,4 +1,5 @@
 import json
+import threading
 
 import httpx
 import pytest
@@ -196,3 +197,31 @@ def test_kev_not_fetched_when_there_are_no_findings():
     result = run("requirements.txt", "flask==2.0.0\n", FakeOSV({}, {}), kev)
     assert kev.calls == 0 and result.kev_status is None
     assert result.blind_spots == []
+
+
+def test_advisories_are_fetched_in_parallel():
+    # Both GETs must be in flight at once, or the barrier times out.
+    barrier = threading.Barrier(2, timeout=5)
+    fake = FakeOSV({("jinja2", "2.4.1"): ["PYSEC-1", "PYSEC-2"]},
+                   {"PYSEC-1": rec("PYSEC-1", "jinja2"),
+                    "PYSEC-2": rec("PYSEC-2", "jinja2")})
+
+    def handler(request):
+        if request.method == "GET":
+            barrier.wait()
+        return fake(request)
+    result = run("requirements.txt", "jinja2==2.4.1\n", handler)
+    assert len(result.findings[0].advisories) == 2
+
+
+def test_one_failed_parallel_fetch_fails_the_whole_scan():
+    fake = FakeOSV({("jinja2", "2.4.1"): ["PYSEC-1", "PYSEC-2", "PYSEC-3"]},
+                   {"PYSEC-1": rec("PYSEC-1", "jinja2"),
+                    "PYSEC-3": rec("PYSEC-3", "jinja2")})
+
+    def handler(request):
+        if request.url.path.endswith("PYSEC-2"):
+            return httpx.Response(404)
+        return fake(request)
+    with pytest.raises(OSVError):
+        run("requirements.txt", "jinja2==2.4.1\n", handler)

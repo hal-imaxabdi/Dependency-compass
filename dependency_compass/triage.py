@@ -12,6 +12,7 @@ the earlier ones. A package with several advisories ranks by its worst one.
    for requirements files it is inferred from the file name.
 4. Direct before transitive: a direct dependency you can upgrade yourself.
 5. Fix availability: every advisory has a fix > only some do (partial) > none.
+   The reason names one upgrade target when upgrade.py can compute it safely.
 6. Tie-break by package name, then version, so the order is deterministic.
 """
 from __future__ import annotations
@@ -22,6 +23,7 @@ from enum import Enum
 from dependency_compass.kev import KEVEntry
 from dependency_compass.models import Dependency, Ecosystem
 from dependency_compass.scanner import Finding
+from dependency_compass.upgrade import Upgrade, recommend_upgrade
 
 MAX_LISTED_CVES = 3
 SEVERITY_ORDER = {"critical": 0, "high": 1, "unknown": 2,
@@ -39,6 +41,7 @@ class RankedFinding:
     rank: int                 # 1 = fix first
     finding: Finding
     reasons: tuple[str, ...]  # one per rule 1-5, in rule order
+    upgrade: Upgrade | None = None
 
 
 def worst_severity(finding: Finding) -> str:
@@ -103,24 +106,41 @@ def _direct_reason(dep: Dependency) -> str:
     return "transitive dependency: needs an upgrade of the package that pulls it in"
 
 
-def _fix_reason(finding: Finding) -> str:
+def _major_note(upgrade: Upgrade) -> str:
+    return (" (major version upgrade: check for breaking changes)"
+            if upgrade.major_bump else "")
+
+
+def _fix_reason(finding: Finding, upgrade: Upgrade | None) -> str:
     state = fix_state(finding)
+    total = len(finding.advisories)
     if state is FixState.ALL:
-        return "fix available"
+        if upgrade is None:
+            return "fix available (see each advisory's fixed versions)"
+        return (f"fix available: upgrading to {upgrade.version} fixes all "
+                f"{total}{_major_note(upgrade)}")
     if state is FixState.PARTIAL:
         fixed = sum(1 for a in finding.advisories if a.fixed_versions)
-        return (f"partial fix: upgrading won't resolve everything "
-                f"({fixed} of {len(finding.advisories)} advisories have a fix)")
+        if upgrade is None:
+            return (f"partial fix: upgrading won't resolve everything "
+                    f"({fixed} of {total} advisories have a fix)")
+        return (f"partial fix: upgrading won't resolve everything (upgrading "
+                f"to {upgrade.version} fixes {fixed} of {total})"
+                f"{_major_note(upgrade)}")
     return "no fixed version yet: consider mitigation or replacing it"
 
 
-def explain(finding: Finding) -> tuple[str, ...]:
+def explain(finding: Finding,
+            upgrade: Upgrade | None = None) -> tuple[str, ...]:
     dep = finding.dependency
     return (_kev_reason(finding), _severity_reason(finding), _dev_reason(dep),
-            _direct_reason(dep), _fix_reason(finding))
+            _direct_reason(dep), _fix_reason(finding, upgrade))
 
 
 def rank_findings(findings: list[Finding]) -> list[RankedFinding]:
     """Return findings ordered by the numbered rules above, with reasons."""
-    ordered = sorted(findings, key=_sort_key)
-    return [RankedFinding(i, f, explain(f)) for i, f in enumerate(ordered, 1)]
+    ranked = []
+    for i, f in enumerate(sorted(findings, key=_sort_key), 1):
+        upgrade = recommend_upgrade(f)
+        ranked.append(RankedFinding(i, f, explain(f, upgrade), upgrade))
+    return ranked

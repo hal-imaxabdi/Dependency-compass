@@ -110,7 +110,7 @@ def test_reasons_follow_rule_order():
     assert "ransomware" in reasons[0]
     assert reasons[1:] == ("high severity", "production dependency",
                            "direct dependency: you can upgrade it yourself",
-                           "fix available")
+                           "fix available (see each advisory's fixed versions)")
 
 
 def test_kev_reason_caps_listed_cves():
@@ -143,3 +143,12 @@ def test_transitive_reason():
 
 def test_empty_input():
     assert rank_findings([]) == []
+
+
+def test_fix_reason_names_the_upgrade():
+    a = Advisory("A", (), "", "high", ("2.0.0",), "2026-01-01", False,
+                 (("0", "2.0.0", None),))
+    ranked = rank_findings([finding(advisories=[a])])[0]
+    assert ranked.upgrade.version == "2.0.0"
+    assert ranked.reasons[4] == ("fix available: upgrading to 2.0.0 fixes all 1 "
+                                 "(major version upgrade: check for breaking changes)")

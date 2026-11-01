@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
@@ -60,18 +60,29 @@ def safe_filename(filename: str) -> str:
     return PurePosixPath(filename.replace("\\", "/")).name
 
 
-def parse_file(filename: str, text: str) -> tuple[str, ParseResult]:
-    """Pick a parser by file name. Returns (safe base name, result)."""
-    name = safe_filename(filename)
+def _parser_for(name: str) -> Callable[[str, str], ParseResult]:
     if name == "package.json":
-        return name, parse_package_json(text, name)
+        return parse_package_json
     if name == "package-lock.json":
-        return name, parse_package_lock(text, name)
+        return parse_package_lock
     if _REQUIREMENTS_RE.fullmatch(name):
-        return name, parse_requirements(text, name)
+        return parse_requirements
     raise UnsupportedFileError(
         "unsupported file; expected *requirements*.txt, package.json "
         "or package-lock.json")
+
+
+def check_filename(filename: str) -> str:
+    """Return the safe base name if we can parse it; raise otherwise."""
+    name = safe_filename(filename)
+    _parser_for(name)
+    return name
+
+
+def parse_file(filename: str, text: str) -> tuple[str, ParseResult]:
+    """Pick a parser by file name. Returns (safe base name, result)."""
+    name = safe_filename(filename)
+    return name, _parser_for(name)(text, name)
 
 
 def _key(dep: Dependency) -> tuple[str, Ecosystem, str]:

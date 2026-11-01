@@ -1,0 +1,171 @@
+"""HTTP API: POST /api/scan?filename=NAME with the file content as the body.
+
+Security decisions:
+- The body is raw text (Content-Type: text/plain), read in chunks and capped
+  at MAX_BODY_BYTES. Not multipart: Starlette spools large multipart uploads
+  to a temp file on disk, and uploads must never be stored.
+- File type is checked by name before the body is read (same rules as CLI).
+- Rate limited per client IP and globally (see ratelimit.py). Behind a proxy
+  set DC_TRUST_PROXY=1 to use the last X-Forwarded-For entry (the one our
+  proxy added); earlier entries are client-controlled and ignored.
+- Every error is {"error": "..."} with a fixed message: no stack traces,
+  exception text or echoed input. Unexpected errors are logged server-side.
+- OSV failures return 503 and no results (fail closed).
+
+Run: uvicorn --factory dependency_compass.api:app_from_env
+"""
+from __future__ import annotations
+
+import logging
+import math
+import os
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from dependency_compass.cli import Services, default_services
+from dependency_compass.osv_client import OSVError
+from dependency_compass.ratelimit import RateLimiter
+from dependency_compass.report import to_dict
+from dependency_compass.scanner import (
+    UnsupportedFileError, check_filename, parse_file, scan,
+)
+from dependency_compass.triage import rank_findings
+
+log = logging.getLogger(__name__)
+
+MAX_BODY_BYTES = 1024 * 1024
+PER_CLIENT_LIMIT = 10   # scans per minute per IP
+GLOBAL_LIMIT = 60       # scans per minute in total
+MAX_CLIENT_ID = 64
+SECURITY_HEADERS = {
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+}
+
+
+class ApiError(Exception):
+    def __init__(self, status: int, message: str,
+                 headers: dict[str, str] | None = None) -> None:
+        super().__init__(message)
+        self.status, self.message, self.headers = status, message, headers
+
+
+def _error(status: int, message: str,
+           headers: dict[str, str] | None = None) -> JSONResponse:
+    return JSONResponse({"error": message}, status_code=status,
+                        headers={**SECURITY_HEADERS, **(headers or {})})
+
+
+def client_id(request: Request, trust_proxy: bool) -> str:
+    if trust_proxy:
+        forwarded = request.headers.get("x-forwarded-for", "")
+        last = forwarded.rsplit(",", 1)[-1].strip()
+        if last:
+            return last[:MAX_CLIENT_ID]
+    return request.client.host if request.client else "unknown"
+
+
+def _check_content_type(request: Request) -> None:
+    media = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if media != "text/plain":
+        raise ApiError(415, "send the file content as text/plain")
+
+
+async def read_body(request: Request) -> str:
+    """Read at most MAX_BODY_BYTES into memory; never touches disk."""
+    length = request.headers.get("content-length")
+    if length is not None:
+        if not length.isdigit():
+            raise ApiError(400, "invalid Content-Length")
+        if int(length) > MAX_BODY_BYTES:
+            raise ApiError(413, "file is larger than 1 MB")
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > MAX_BODY_BYTES:
+            raise ApiError(413, "file is larger than 1 MB")
+    try:
+        return body.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise ApiError(400, "file is not valid UTF-8") from None
+
+
+def _run_scan(services: Services, filename: str, text: str) -> dict:
+    name, parsed = parse_file(filename, text)
+    result = scan(parsed, name, services.osv, services.cache, services.kev)
+    return to_dict(result, rank_findings(result.findings), name)
+
+
+def create_app(services: Services | None = None,
+               limiter: RateLimiter | None = None,
+               trust_proxy: bool = False, docs: bool = False) -> FastAPI:
+    services = services or default_services()
+    limiter = limiter or RateLimiter(PER_CLIENT_LIMIT, GLOBAL_LIMIT)
+    app = FastAPI(title="Dependency Compass",
+                  docs_url="/docs" if docs else None, redoc_url=None,
+                  openapi_url="/openapi.json" if docs else None)
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        for key, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(key, value)
+        return response
+
+    @app.exception_handler(ApiError)
+    async def api_error(request: Request, exc: ApiError) -> JSONResponse:
+        return _error(exc.status, exc.message, exc.headers)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(request: Request, exc: StarletteHTTPException):
+        message = "not found" if exc.status_code == 404 else "request not allowed"
+        return _error(exc.status_code, message)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, exc: RequestValidationError):
+        return _error(400, "invalid request")
+
+    @app.exception_handler(Exception)
+    async def unexpected(request: Request, exc: Exception) -> JSONResponse:
+        log.exception("unhandled error")
+        return _error(500, "internal error")
+
+    @app.get("/healthz")
+    async def healthz() -> dict:
+        return {"status": "ok"}
+
+    @app.post("/api/scan")
+    async def scan_endpoint(request: Request) -> JSONResponse:
+        wait = limiter.check(client_id(request, trust_proxy))
+        if wait is not None:
+            raise ApiError(429, "too many scans; try again shortly",
+                           {"Retry-After": str(max(1, math.ceil(wait)))})
+        try:
+            filename = check_filename(request.query_params.get("filename", ""))
+        except UnsupportedFileError as exc:
+            raise ApiError(400, str(exc)) from None
+        _check_content_type(request)
+        text = await read_body(request)
+        try:
+            data = await run_in_threadpool(_run_scan, services, filename, text)
+        except OSVError:
+            raise ApiError(503, "vulnerability database unavailable; "
+                                "no results reported (fail closed)") from None
+        except Exception:
+            log.exception("scan failed")
+            raise ApiError(500, "internal error") from None
+        return JSONResponse(data)
+
+    return app
+
+
+def app_from_env() -> FastAPI:
+    return create_app(trust_proxy=os.environ.get("DC_TRUST_PROXY") == "1",
+                      docs=os.environ.get("DC_ENABLE_DOCS") == "1")

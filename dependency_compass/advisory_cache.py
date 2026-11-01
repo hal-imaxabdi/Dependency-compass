@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable
@@ -13,7 +14,10 @@ MAX_ENTRIES = 2000
 
 
 class AdvisoryCache:
-    """In-memory TTL cache of parsed advisories. Never stores uploads."""
+    """In-memory TTL cache of parsed advisories. Never stores uploads.
+
+    Thread-safe: the lock guards the dict only, never the network fetch.
+    """
 
     def __init__(self, client: OSVClient, ttl: float = DEFAULT_TTL,
                  max_entries: int = MAX_ENTRIES,
@@ -23,19 +27,22 @@ class AdvisoryCache:
         self._max = max_entries
         self._clock = clock
         self._items: OrderedDict[tuple, tuple[float, Advisory]] = OrderedDict()
+        self._lock = threading.Lock()
 
     def __len__(self) -> int:
         return len(self._items)
 
     def get(self, vuln_id: str, name: str, ecosystem: Ecosystem) -> Advisory:
         key = (vuln_id, ecosystem, _norm(name, ecosystem))
-        hit = self._items.get(key)
-        if hit is not None and self._clock() - hit[0] < self._ttl:
-            return hit[1]
-        self._items.pop(key, None)
+        with self._lock:
+            hit = self._items.get(key)
+            if hit is not None and self._clock() - hit[0] < self._ttl:
+                return hit[1]
+            self._items.pop(key, None)
         record = self._client.get_vulnerability(vuln_id)
         advisory = parse_advisory(record, name, ecosystem)
-        self._items[key] = (self._clock(), advisory)
-        while len(self._items) > self._max:
-            self._items.popitem(last=False)
+        with self._lock:
+            self._items[key] = (self._clock(), advisory)
+            while len(self._items) > self._max:
+                self._items.popitem(last=False)
         return advisory

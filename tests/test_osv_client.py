@@ -61,3 +61,46 @@ OUTAGES = {
 def test_outage_raises_osv_error_never_empty(handler):
     with pytest.raises(OSVError):
         make_client(handler).query_batch(QUERIES)
+
+
+def big_queries(n=2500):
+    return [PackageQuery("pkg", Ecosystem.NPM, str(i)) for i in range(n)]
+
+
+def test_large_input_is_split_into_ordered_batches():
+    sizes = []
+
+    def handler(request):
+        qs = json.loads(request.content)["queries"]
+        sizes.append(len(qs))
+        return httpx.Response(200, json={"results": [
+            {"vulns": [{"id": "ID-" + q["version"]}]} for q in qs]})
+
+    result = make_client(handler).query_batch(big_queries())
+    assert sizes == [1000, 1000, 500]
+    assert result == [["ID-" + str(i)] for i in range(2500)]
+
+
+def test_empty_input_makes_no_request():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, json={"results": []})
+
+    assert make_client(handler).query_batch([]) == []
+    assert calls == []
+
+
+def test_failure_in_later_batch_raises_not_partial():
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) == 2:
+            return httpx.Response(500)
+        qs = json.loads(request.content)["queries"]
+        return httpx.Response(200, json={"results": [{} for _ in qs]})
+
+    with pytest.raises(OSVError):
+        make_client(handler).query_batch(big_queries())

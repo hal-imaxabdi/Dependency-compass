@@ -19,7 +19,8 @@ from dependency_compass.parsers.requirements import parse_requirements
 MAX_ADVISORY_FETCHES = 2000   # caps follow-up GETs per scan
 FETCH_WORKERS = 8   # parallel GETs; bounded so we don't hammer OSV
 MAX_FILENAME_LENGTH = 255
-UNPINNED_REASON = "version is a range, not an exact pin; not checked"
+UNPINNED_REASON = ("version range, so the installed version is unknown. Pin it "
+                   "(name==version) or scan a lockfile")
 KEV_SOURCE = "CISA KEV catalog"
 KEV_UNAVAILABLE_REASON = ("KEV catalog unavailable; known-exploited status "
                           "of findings was not checked")

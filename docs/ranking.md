@@ -38,3 +38,11 @@ counted as safe:
 - lines it can't parse, `-r` includes, URLs and VCS references
 - the CISA KEV catalog being unreachable (exploitation status becomes
   *unknown*, never "not exploited")
+
+## Limitations
+
+- Supported files: `package-lock.json` (v1–v3), `package.json`, `requirements*.txt`.
+  No Poetry, Pipenv, yarn or pnpm lockfiles yet.
+- It doesn't know whether your code actually calls the vulnerable function.
+- The upgrade target doesn't check for API changes beyond flagging major versions,
+  or whether a version was yanked.

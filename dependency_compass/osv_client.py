@@ -40,7 +40,7 @@ class OSVClient:
 
     def _send(self, method: str, path: str,
               json: object = None) -> httpx.Response:
-        """POST with retries on transient failures only."""
+        """Send a request, retrying transient failures only."""
         for attempt in range(MAX_ATTEMPTS):
             try:
                 response = self._http.request(method, path, json=json)
@@ -119,4 +119,6 @@ class OSVClient:
             raise OSVError(f"OSV request failed: {type(exc).__name__}") from exc
         if not isinstance(record, dict):
             raise OSVError("OSV returned a malformed vulnerability record")
+        if record.get("id") != vuln_id:
+            raise OSVError("OSV returned a different record than requested")
         return record

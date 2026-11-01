@@ -271,3 +271,15 @@ def test_get_vulnerability_retries_503():
 
     assert make_client(handler).get_vulnerability("CVE-2020-1")["id"] == "CVE-2020-1"
     assert len(calls) == 2
+
+
+def test_get_vulnerability_rejects_record_with_different_id():
+    with pytest.raises(OSVError):
+        make_client(lambda r: httpx.Response(200, json={"id": "OTHER-1"})
+                    ).get_vulnerability("CVE-2020-1")
+
+
+def test_get_vulnerability_rejects_record_without_id():
+    with pytest.raises(OSVError):
+        make_client(lambda r: httpx.Response(200, json={})
+                    ).get_vulnerability("CVE-2020-1")

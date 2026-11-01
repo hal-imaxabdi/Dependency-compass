@@ -59,3 +59,18 @@ def test_text_never_says_clean_when_blind_spots_exist():
     result = ScanResult(blind_spots=[BlindSpot("r.txt", "a>=1", "range", 1)])
     text = render_text(to_dict(result, [], "r.txt"))
     assert "NOT checked" in text and "r.txt:1" in text
+
+
+def test_nothing_checked_headline_and_lockfile_hint():
+    result = ScanResult(blind_spots=[BlindSpot("package.json", "a ^1.0.0",
+                                               "range", None)])
+    data = to_dict(result, [], "package.json")
+    text = render_text(data)
+    assert data["hint"] and "package-lock.json" in data["hint"]
+    assert "Nothing could be checked: 1 item(s)" in text
+    assert "Tip: package.json only lists version ranges" in text
+
+
+def test_no_hint_for_lockfile():
+    result = ScanResult(blind_spots=[BlindSpot("package-lock.json", "x", "y", None)])
+    assert to_dict(result, [], "package-lock.json")["hint"] is None

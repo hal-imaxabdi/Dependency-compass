@@ -1,0 +1,9 @@
+# Sample manifest with known-vulnerable pins (do not install).
+jinja2==2.10
+django==3.2.0
+requests==2.19.0
+pyyaml==5.3
+urllib3==1.24.1
+flask==2.0.0
+# Unpinned: shows up under "blind spots", never as clean.
+numpy>=1.20

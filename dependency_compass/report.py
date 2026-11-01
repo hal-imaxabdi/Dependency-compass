@@ -16,6 +16,8 @@ from dependency_compass.triage import (
 SCHEMA_VERSION = 1
 MAX_TEXT = 200
 MAX_LISTED_FIXES = 5
+LOCKFILE_HINT = ("package.json only lists version ranges. Scan package-lock.json "
+                 "instead: it has the exact installed versions.")
 # C0/C1 controls (incl. ESC for ANSI sequences) and bidi overrides.
 _UNSAFE_RE = re.compile(r"[\x00-\x1f\x7f-\x9f‎‏‪-‮⁦-⁩]")
 
@@ -48,12 +50,17 @@ def _finding_dict(ranked: RankedFinding) -> dict:
     advisories.sort(key=lambda a: (not a["in_kev"], SEVERITY_ORDER.get(
         a["severity"], SEVERITY_ORDER["unknown"]), a["id"]))   # worst first
     in_kev = None if f.kev is None else any(a["in_kev"] for a in advisories)
+    up = ranked.upgrade
+    upgrade = None if up is None else {
+        "version": clean_text(up.version), "fixes": up.fixes,
+        "total": up.total, "major_bump": up.major_bump}
     return {"rank": ranked.rank, "package": clean_text(dep.name),
             "version": clean_text(dep.resolved_version or ""),
             "ecosystem": dep.ecosystem.value, "direct": dep.is_direct,
             "dev": dep.is_dev, "in_kev": in_kev,
             "worst_severity": clean_text(worst_severity(f)),
             "fix": fix_state(f).name.lower(),
+            "upgrade": upgrade,
             "reasons": [clean_text(r) for r in ranked.reasons],
             "advisories": advisories}
 
@@ -61,6 +68,12 @@ def _finding_dict(ranked: RankedFinding) -> dict:
 def _blind_spot_dict(b: BlindSpot) -> dict:
     return {"file": clean_text(b.source_file), "line": b.line_number,
             "content": clean_text(b.content), "reason": clean_text(b.reason)}
+
+
+def _hint(result: ScanResult, source_file: str) -> str | None:
+    if source_file == "package.json" and result.blind_spots:
+        return LOCKFILE_HINT
+    return None
 
 
 def to_dict(result: ScanResult, ranked: list[RankedFinding],
@@ -76,6 +89,7 @@ def to_dict(result: ScanResult, ranked: list[RankedFinding],
             "blind_spots": len(result.blind_spots),
             "kev_status": result.kev_status.value if result.kev_status else None,
         },
+        "hint": _hint(result, source_file),
         "findings": findings,
         "blind_spots": [_blind_spot_dict(b) for b in result.blind_spots],
         "clean": [{"package": clean_text(d.name),
@@ -91,6 +105,9 @@ def _headline(data: dict) -> str:
         return (f"{s['findings']} vulnerable package(s){kev} · "
                 f"{s['clean']} with no known advisories · "
                 f"{s['blind_spots']} not checked")
+    if s["blind_spots"] and not s["clean"]:
+        return (f"Nothing could be checked: {s['blind_spots']} item(s) were "
+                f"NOT checked (see blind spots).")
     if s["blind_spots"]:
         return (f"No known vulnerabilities in the {s['clean']} package(s) we "
                 f"could check, but {s['blind_spots']} item(s) were NOT checked "
@@ -107,11 +124,21 @@ def _fixes(adv: dict) -> str:
     return "fixed in " + ", ".join(fixes[:MAX_LISTED_FIXES]) + more
 
 
+def upgrade_line(up: dict) -> str:
+    covers = f"all {up['total']}" if up["fixes"] == up["total"] \
+        else f"{up['fixes']} of {up['total']}"
+    major = " (major version upgrade: check for breaking changes)" \
+        if up["major_bump"] else ""
+    return f"Upgrade to {up['version']}: fixes {covers} advisories{major}"
+
+
 def _finding_lines(f: dict) -> list[str]:
     scope = "dev" if f["dev"] else "prod"
     kind = "direct" if f["direct"] else "transitive"
     lines = [f"#{f['rank']}  {f['package']} {f['version']}  "
              f"[{f['ecosystem']} · {scope} · {kind}]"]
+    if f["upgrade"]:
+        lines.append(f"    → {upgrade_line(f['upgrade'])}")
     for a in f["advisories"]:
         kev = "  [KEV]" if a["in_kev"] else ""
         summary = f"  {a['summary']}" if a["summary"] else ""
@@ -129,7 +156,10 @@ def _blind_spot_line(b: dict) -> str:
 
 
 def render_text(data: dict) -> str:
-    lines = [f"Dependency Compass: {data['file']}", _headline(data), ""]
+    lines = [f"Dependency Compass: {data['file']}", _headline(data)]
+    if data["hint"]:
+        lines.append(f"Tip: {data['hint']}")
+    lines.append("")
     for f in data["findings"]:
         lines.extend(_finding_lines(f))
         lines.append("")

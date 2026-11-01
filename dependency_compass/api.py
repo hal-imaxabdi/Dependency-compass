@@ -11,6 +11,8 @@ Security decisions:
 - Every error is {"error": "..."} with a fixed message: no stack traces,
   exception text or echoed input. Unexpected errors are logged server-side.
 - OSV failures return 503 and no results (fail closed).
+- The page (/ and /static) gets its own CSP: only same-origin scripts,
+  styles and fetches, no inline code. API responses get default-src 'none'.
 
 Run: uvicorn --factory dependency_compass.api:app_from_env
 """
@@ -19,10 +21,12 @@ from __future__ import annotations
 import logging
 import math
 import os
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -41,12 +45,17 @@ MAX_BODY_BYTES = 1024 * 1024
 PER_CLIENT_LIMIT = 10   # scans per minute per IP
 GLOBAL_LIMIT = 60       # scans per minute in total
 MAX_CLIENT_ID = 64
+STATIC_DIR = Path(__file__).parent / "static"
+API_CSP = "default-src 'none'; frame-ancestors 'none'"
+PAGE_CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; "
+            "connect-src 'self'; img-src 'self'; form-action 'none'; "
+            "base-uri 'none'; frame-ancestors 'none'")
 SECURITY_HEADERS = {
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
-    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+    "Content-Security-Policy": API_CSP,
 }
 
 
@@ -115,8 +124,12 @@ def create_app(services: Services | None = None,
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         response = await call_next(request)
+        path = request.url.path
+        page = path == "/" or path.startswith("/static/")
         for key, value in SECURITY_HEADERS.items():
             response.headers.setdefault(key, value)
+        if page and response.status_code == 200:
+            response.headers["Content-Security-Policy"] = PAGE_CSP
         return response
 
     @app.exception_handler(ApiError)
@@ -136,6 +149,12 @@ def create_app(services: Services | None = None,
     async def unexpected(request: Request, exc: Exception) -> JSONResponse:
         log.exception("unhandled error")
         return _error(500, "internal error")
+
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+    @app.get("/", include_in_schema=False)
+    async def index() -> FileResponse:
+        return FileResponse(STATIC_DIR / "index.html")
 
     @app.get("/healthz")
     async def healthz() -> dict:

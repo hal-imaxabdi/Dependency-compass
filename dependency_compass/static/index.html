@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dependency Compass</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Dependency Compass</h1>
+      <p class="lede">What should I fix first, why, and what couldn't be checked?</p>
+    </header>
+
+    <form id="scan-form" novalidate>
+      <div class="row">
+        <label class="file">
+          <span>Upload a file</span>
+          <input type="file" id="file"
+                 accept=".txt,.json,text/plain,application/json">
+        </label>
+        <label>
+          <span>File type</span>
+          <select id="filetype">
+            <option value="requirements.txt">requirements.txt</option>
+            <option value="requirements-dev.txt">requirements-dev.txt</option>
+            <option value="package.json">package.json</option>
+            <option value="package-lock.json">package-lock.json</option>
+          </select>
+        </label>
+      </div>
+      <label class="paste">
+        <span>…or paste its contents</span>
+        <textarea id="content" rows="10" spellcheck="false"
+                  placeholder="jinja2==2.10&#10;requests==2.19.0"></textarea>
+      </label>
+      <p id="file-note" class="note" hidden></p>
+      <div class="row actions">
+        <button type="submit" id="scan-btn">Scan</button>
+        <button type="button" id="sample-btn" class="secondary">Load sample</button>
+      </div>
+      <p class="note">Files are scanned in memory and never stored. Max 1 MB.
+        Checks <a href="https://osv.dev" rel="noopener noreferrer">OSV</a> and the
+        <a href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog"
+           rel="noopener noreferrer">CISA KEV catalog</a>.</p>
+    </form>
+
+    <p id="status" class="status" role="status" aria-live="polite" hidden></p>
+    <section id="results" hidden></section>
+  </main>
+</body>
+</html>

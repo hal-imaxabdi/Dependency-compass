@@ -11,6 +11,8 @@ Security decisions:
 - Every error is {"error": "..."} with a fixed message: no stack traces,
   exception text or echoed input. Unexpected errors are logged server-side.
 - OSV failures return 503 and no results (fail closed).
+- DC_LOG_FORWARDED=1 (temporary, off by default) logs the raw
+  X-Forwarded-For header, sanitized, to check what the proxy really sends.
 - The page (/ and /static) gets its own CSP: only same-origin scripts,
   styles and fetches, no inline code. API responses get default-src 'none'.
 
@@ -33,7 +35,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from dependency_compass.cli import Services, default_services
 from dependency_compass.osv_client import OSVError
 from dependency_compass.ratelimit import RateLimiter
-from dependency_compass.report import to_dict
+from dependency_compass.report import clean_text, to_dict
 from dependency_compass.scanner import (
     UnsupportedFileError, check_filename, parse_file, scan,
 )
@@ -114,7 +116,8 @@ def _run_scan(services: Services, filename: str, text: str) -> dict:
 
 def create_app(services: Services | None = None,
                limiter: RateLimiter | None = None,
-               trust_proxy: bool = False, docs: bool = False) -> FastAPI:
+               trust_proxy: bool = False, docs: bool = False,
+               log_forwarded: bool = False) -> FastAPI:
     services = services or default_services()
     limiter = limiter or RateLimiter(PER_CLIENT_LIMIT, GLOBAL_LIMIT)
     app = FastAPI(title="Dependency Compass",
@@ -162,6 +165,10 @@ def create_app(services: Services | None = None,
 
     @app.post("/api/scan")
     async def scan_endpoint(request: Request) -> JSONResponse:
+        if log_forwarded:
+            log.info("peer=%s x-forwarded-for=%s",
+                     request.client.host if request.client else "unknown",
+                     clean_text(request.headers.get("x-forwarded-for", "")))
         wait = limiter.check(client_id(request, trust_proxy))
         if wait is not None:
             raise ApiError(429, "too many scans; try again shortly",
@@ -186,5 +193,8 @@ def create_app(services: Services | None = None,
 
 
 def app_from_env() -> FastAPI:
+    logging.basicConfig(level=logging.INFO,
+                        format="%(levelname)s %(name)s: %(message)s")
     return create_app(trust_proxy=os.environ.get("DC_TRUST_PROXY") == "1",
-                      docs=os.environ.get("DC_ENABLE_DOCS") == "1")
+                      docs=os.environ.get("DC_ENABLE_DOCS") == "1",
+                      log_forwarded=os.environ.get("DC_LOG_FORWARDED") == "1")

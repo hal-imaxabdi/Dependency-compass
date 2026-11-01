@@ -1,0 +1,21 @@
+# Render Blueprint: New > Blueprint > pick this repo.
+services:
+  - type: web
+    name: dependency-compass
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # One process: the rate limiter and caches live in memory.
+    # --no-proxy-headers: our own code decides which forwarded IP to trust.
+    startCommand: >-
+      uvicorn --factory dependency_compass.api:app_from_env
+      --host 0.0.0.0 --port $PORT
+      --no-proxy-headers --no-server-header --limit-concurrency 32
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.3
+      - key: DC_TRUST_PROXY
+        value: "0"   # set to "1" once the X-Forwarded-For check is done
+      - key: DC_LOG_FORWARDED
+        value: "1"   # temporary: logs the raw header for that check

@@ -12,6 +12,7 @@ from dependency_compass.advisory_cache import AdvisoryCache
 from dependency_compass.kev import KEVEntry, KEVLookup, KEVStatus
 from dependency_compass.models import Dependency, Ecosystem, ParseResult
 from dependency_compass.osv_client import OSVClient, OSVError, PackageQuery
+from dependency_compass.parsers.composer_lock import parse_composer_lock
 from dependency_compass.parsers.package_json import parse_package_json
 from dependency_compass.parsers.package_lock import parse_package_lock
 from dependency_compass.parsers.requirements import parse_requirements
@@ -68,11 +69,13 @@ def _parser_for(name: str) -> Callable[[str, str], ParseResult]:
         return parse_package_json
     if name == "package-lock.json":
         return parse_package_lock
+    if name == "composer.lock":
+        return parse_composer_lock
     if _REQUIREMENTS_RE.fullmatch(name):
         return parse_requirements
     raise UnsupportedFileError(
-        "unsupported file; expected *requirements*.txt, package.json "
-        "or package-lock.json")
+        "unsupported file; expected *requirements*.txt, package.json, "
+        "package-lock.json or composer.lock")
 
 
 def check_filename(filename: str) -> str:

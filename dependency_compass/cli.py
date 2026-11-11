@@ -59,8 +59,8 @@ def _parser() -> argparse.ArgumentParser:
         prog="dependency-compass",
         description="Rank dependency vulnerabilities by what to fix first.")
     sub = parser.add_subparsers(dest="command", required=True)
-    s = sub.add_parser("scan", help="scan a requirements*.txt, package.json "
-                                    "or package-lock.json file")
+    s = sub.add_parser("scan", help="scan a requirements*.txt, package.json, "
+                                    "package-lock.json or composer.lock file")
     s.add_argument("file")
     s.add_argument("--json", action="store_true", help="print JSON instead of text")
     s.add_argument("--fail-on", choices=list(FAIL_ON), default="high",

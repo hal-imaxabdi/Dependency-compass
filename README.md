@@ -16,7 +16,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
 </p>
 
-Drop in a `package-lock.json` or `requirements.txt` and get a ranked fix list:
+Drop in a `package-lock.json`, `requirements.txt` or `composer.lock` (PHP) and get a ranked fix list:
 
 - **Actively exploited first** ([CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog)), then by severity
 - **One upgrade per package** that fixes every advisory it can

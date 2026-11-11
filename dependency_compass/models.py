@@ -6,6 +6,7 @@ from enum import Enum
 class Ecosystem(str, Enum):
     PYPI = "PyPI"   # these strings must match OSV's ecosystem names exactly
     NPM = "npm"
+    PACKAGIST = "Packagist"
 
 
 @dataclass(frozen=True)

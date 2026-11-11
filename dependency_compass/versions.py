@@ -38,6 +38,11 @@ def version_key(value: str, ecosystem: Ecosystem) -> object | None:
             return Version(value)
         except InvalidVersion:
             return None
+    if ecosystem is Ecosystem.PACKAGIST:
+        # Composer orders prereleases differently from SemVer, so only
+        # stable X.Y.Z is compared; anything else means "can't tell".
+        key = _semver_key(value)
+        return key if key is not None and key[3] == (1,) else None
     return _semver_key(value)
 
 

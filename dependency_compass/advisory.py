@@ -31,6 +31,8 @@ class Advisory:
 def _norm(name: str, ecosystem: Ecosystem) -> str:
     if ecosystem is Ecosystem.PYPI:
         return re.sub(r"[-_.]+", "-", name).lower()
+    if ecosystem is Ecosystem.PACKAGIST:
+        return name.lower()   # Composer package names are case-insensitive
     return name
 
 

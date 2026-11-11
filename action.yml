@@ -6,7 +6,7 @@ branding:
 
 inputs:
   file:
-    description: Path to requirements*.txt, package.json or package-lock.json
+    description: Path to requirements*.txt, package.json, package-lock.json or composer.lock
     required: true
   fail-on:
     description: Fail if a finding is at/above this severity (critical, high, medium, low, any). KEV findings always fail.

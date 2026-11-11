@@ -5,7 +5,7 @@ const MAX_BYTES = 1024 * 1024;
 const WAKE_NOTE_MS = 4000;
 const SEVERITIES = ["critical", "high", "unknown", "medium", "low"];
 const KNOWN_TYPES = ["requirements.txt", "requirements-dev.txt",
-                     "package-lock.json", "package.json"];
+                     "package-lock.json", "package.json", "composer.lock"];
 const $ = (id) => document.getElementById(id);
 
 let uploadedName = null;   // set when a file is chosen; cleared on paste/type change
@@ -40,8 +40,9 @@ function setStatus(text, kind) {
 // ---- Copy -----------------------------------------------------------------
 
 function pinFor(f) {
-  return f.ecosystem === "PyPI" ? `${f.package}==${f.upgrade.version}`
-                                : `${f.package}@${f.upgrade.version}`;
+  if (f.ecosystem === "PyPI") return `${f.package}==${f.upgrade.version}`;
+  if (f.ecosystem === "Packagist") return `${f.package}:${f.upgrade.version}`;
+  return `${f.package}@${f.upgrade.version}`;
 }
 
 async function copyText(button, text, label) {

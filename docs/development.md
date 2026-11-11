@@ -25,7 +25,7 @@ flowchart LR
 
 | Module | Job |
 |---|---|
-| `parsers/` | requirements.txt, package.json, package-lock.json (v1–v3) |
+| `parsers/` | requirements.txt, package.json, package-lock.json (v1–v3), composer.lock |
 | `osv_client.py` | OSV batch queries, pagination, retries, validation |
 | `advisory.py`, `advisory_cache.py` | parse OSV records; in-memory TTL cache |
 | `kev.py` | CISA KEV download, validation, cache, stale fallback |

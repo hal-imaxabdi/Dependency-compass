@@ -44,10 +44,10 @@
       <div id="panel-upload" role="tabpanel" aria-labelledby="tab-upload" class="panel">
         <label class="dropzone" id="dropzone">
           <input type="file" id="file" class="visually-hidden"
-                 accept=".txt,.json,text/plain,application/json">
+                 accept=".txt,.json,.lock,text/plain,application/json">
           <svg class="dropzone-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4m0 0L7.5 8.5M12 4l4.5 4.5M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>
           <span class="dropzone-title" id="dropzone-title">Drop a file here or <u>choose one</u></span>
-          <span class="dropzone-sub">package-lock.json · requirements*.txt · package.json (max 1 MB)</span>
+          <span class="dropzone-sub">package-lock.json · requirements*.txt · package.json · composer.lock (max 1 MB)</span>
         </label>
       </div>
 
@@ -59,6 +59,7 @@
             <option value="requirements-dev.txt">requirements-dev.txt</option>
             <option value="package-lock.json">package-lock.json</option>
             <option value="package.json">package.json</option>
+            <option value="composer.lock">composer.lock</option>
           </select>
         </div>
         <label for="content" class="visually-hidden">File contents</label>
